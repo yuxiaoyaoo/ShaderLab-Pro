@@ -1,0 +1,27 @@
+# ---- 依赖与构建产物 ----
+node_modules/
+dist/
+
+# ---- Tauri / Rust 构建产物 ----
+src-tauri/target/
+src-tauri/gen/schemas
+
+# ---- 本地开发数据 ----
+webview-data/
+.shots/
+
+# ---- 密钥与机密（绝不提交） ----
+*.key
+*.pem
+*.p12
+*.pfx
+.env
+
+# ---- 日志 ----
+*.log
+
+# ---- 系统与编辑器 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

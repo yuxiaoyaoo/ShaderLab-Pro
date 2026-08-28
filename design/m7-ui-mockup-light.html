@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShaderLab Pro · M7 视觉稿 v2 · Soft Light</title>
+<style>
+:root {
+  --page: #c6cbe9;
+  --shell: #edeff9;
+  --card: #ffffff;
+  --card-soft: #f0f3fc;
+  --track: #e8ebf7;
+  --line: #e3e7f4;
+  --txt: #232a4d;
+  --txt2: #5a6390;
+  --txt3: #9aa2c4;
+  --brand: #3d6ef5;
+  --brand2: #7a5cf9;
+  --grad: linear-gradient(135deg, #4f8dff, #6d5df9);
+  --ink: #17181d;
+  --ink-hover: #26272e;
+  --ok: #1ea97c;
+  --r-card: 22px;
+  --r-ctl: 12px;
+  --r-pill: 999px;
+  --shadow-card: 0 14px 34px -18px rgba(46, 56, 116, 0.28);
+  --shadow-soft: 0 6px 16px -8px rgba(46, 56, 116, 0.20);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--txt);
+  background:
+    radial-gradient(60% 50% at 12% 8%, rgba(255, 255, 255, 0.5), transparent 60%),
+    radial-gradient(55% 60% at 92% 94%, rgba(154, 130, 246, 0.28), transparent 62%),
+    var(--page);
+  overflow: hidden;
+}
+
+.shell {
+  display: flex;
+  height: calc(100vh - 28px);
+  margin: 14px;
+  background: var(--shell);
+  border-radius: 26px;
+  box-shadow: 0 30px 70px -30px rgba(38, 47, 100, 0.45);
+  overflow: hidden;
+}
+
+.rail {
+  flex: 0 0 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0;
+}
+.logo {
+  width: 36px; height: 36px;
+  border-radius: 12px;
+  background: var(--ink);
+  display: grid; place-items: center;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-soft);
+}
+.logo svg { width: 17px; height: 17px; stroke: #fff; }
+.rail-btn {
+  width: 40px; height: 40px;
+  border: none;
+  border-radius: 13px;
+  background: transparent;
+  color: #7a83ad;
+  display: grid; place-items: center;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.rail-btn:hover { background: rgba(255, 255, 255, 0.75); color: var(--txt2); }
+.rail-btn.active {
+  background: #fff;
+  color: var(--txt);
+  box-shadow: var(--shadow-soft);
+}
+.rail-btn svg { width: 19px; height: 19px; }
+.rail-spacer { flex: 1; }
+.rail-ai {
+  background: var(--grad);
+  color: #fff;
+  box-shadow: 0 10px 22px -8px rgba(93, 108, 249, 0.65);
+}
+.rail-ai:hover { background: linear-gradient(135deg, #5d9aff, #7d6fff); color: #fff; }
+
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 14px 16px 16px 4px; }
+
+.topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.brand { min-width: 0; }
+.brand h1 { font-size: 19px; font-weight: 700; letter-spacing: 0.01em; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.brand p { font-size: 11px; color: var(--txt3); margin-top: 1px; white-space: nowrap; }
+.dot-mod { width: 8px; height: 8px; border-radius: 50%; background: #ffb454; box-shadow: 0 0 0 3px rgba(255, 180, 84, 0.22); }
+.chip {
+  height: 30px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 13px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--txt2);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: var(--shadow-soft);
+  transition: box-shadow 0.12s, color 0.12s;
+}
+.chip:hover { color: var(--txt); box-shadow: 0 8px 20px -10px rgba(46, 56, 116, 0.32); }
+.chip svg { width: 12px; height: 12px; stroke: var(--txt3); }
+.chip-file { color: var(--txt3); font-weight: 400; }
+
+.transport {
+  margin-left: auto;
+  height: 46px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 8px 0 6px;
+  background: #fff;
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-card);
+}
+.t-btn {
+  width: 32px; height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--txt2);
+  display: grid; place-items: center;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.t-btn:hover { background: var(--card-soft); color: var(--txt); }
+.t-btn svg { width: 15px; height: 15px; }
+.t-play {
+  width: 34px; height: 34px;
+  background: var(--ink);
+  color: #fff;
+  box-shadow: 0 8px 18px -6px rgba(23, 24, 29, 0.55);
+}
+.t-play:hover { background: var(--ink-hover); color: #fff; }
+.t-play svg { width: 15px; height: 15px; }
+.timeline {
+  flex: 0 1 240px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  background: var(--track);
+  position: relative;
+  cursor: pointer;
+}
+.tl-fill {
+  position: absolute; inset: 3px auto 3px 3px;
+  width: 41%;
+  border-radius: var(--r-pill);
+  background: var(--grad);
+}
+.tl-knob {
+  position: absolute; top: 50%; left: 41%;
+  width: 12px; height: 12px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(93, 108, 249, 0.30), 0 2px 5px rgba(46, 56, 116, 0.35);
+}
+.tl-time { font-size: 11px; color: var(--txt3); font-variant-numeric: tabular-nums; white-space: nowrap; padding-right: 6px; }
+.chip-mini {
+  height: 26px;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: #eef2ff;
+  color: var(--brand);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chip-mini svg { width: 11px; height: 11px; stroke: var(--brand); }
+
+.workspace { flex: 1; display: flex; gap: 14px; min-height: 0; }
+.card {
+  background: var(--card);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+
+.editor { flex: 0 0 46%; display: flex; flex-direction: column; overflow: hidden; }
+.tabbar {
+  height: 46px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  height: 30px;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  border: none;
+  color: var(--txt3);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.tab:hover { color: var(--txt2); background: var(--card-soft); }
+.tab.active { background: #eef2ff; color: var(--txt); }
+.tab-dot { width: 6px; height: 6px; border-radius: 50%; background: #c3c9e2; }
+.tab.active .tab-dot { background: var(--brand); box-shadow: 0 0 0 3px rgba(61, 110, 245, 0.18); }
+.tabbar-spacer { flex: 1; }
+.tab-add {
+  width: 28px; height: 28px;
+  border: none; border-radius: 9px;
+  background: transparent; color: var(--txt3);
+  display: grid; place-items: center; cursor: pointer;
+}
+.tab-add:hover { background: var(--card-soft); color: var(--txt2); }
+.tab-add svg { width: 14px; height: 14px; }
+
+.code {
+  flex: 1;
+  overflow: auto;
+  padding: 13px 0;
+  font-family: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.75;
+}
+.cl { display: flex; white-space: pre; }
+.ln {
+  flex: 0 0 46px;
+  text-align: right;
+  padding-right: 15px;
+  color: #b9c0da;
+  user-select: none;
+}
+.cl.active .ln { color: var(--brand); font-weight: 600; }
+.cl.active { background: linear-gradient(90deg, rgba(61, 110, 245, 0.06), transparent 70%); }
+.cc { padding-right: 18px; color: #2a3158; }
+.k { color: #3d6ef5; }
+.f { color: #8a5cf6; }
+.n { color: #e0714d; }
+.c { color: #9aa3c7; font-style: italic; }
+.u { color: #0d9488; }
+.statusline {
+  height: 34px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--txt2);
+}
+.statusline .ok-ic { width: 13px; height: 13px; stroke: var(--ok); }
+.statusline-right { margin-left: auto; display: flex; gap: 14px; color: var(--txt3); font-variant-numeric: tabular-nums; }
+
+.preview { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 10px; }
+.canvas {
+  flex: 1;
+  position: relative;
+  border-radius: 15px;
+  overflow: hidden;
+  background:
+    radial-gradient(90% 120% at 88% 0%, rgba(255, 255, 255, 0.32), transparent 46%),
+    radial-gradient(70% 90% at 6% 102%, rgba(122, 92, 249, 0.60), transparent 58%),
+    linear-gradient(132deg, #5b95ff 0%, #5f74f8 48%, #7a5cf9 100%);
+}
+.canvas::before {
+  content: "";
+  position: absolute; inset: -20%;
+  background:
+    radial-gradient(34% 44% at 30% 38%, rgba(255, 255, 255, 0.20), transparent 70%),
+    radial-gradient(26% 34% at 74% 72%, rgba(255, 255, 255, 0.10), transparent 70%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .canvas::before { animation: sheen 18s ease-in-out infinite alternate; }
+  @keyframes sheen {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(4%, -3%, 0); }
+  }
+}
+.trend {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  opacity: 0.85;
+}
+.bubble {
+  position: absolute;
+  top: 34%; left: 58%;
+  height: 26px;
+  display: inline-flex; align-items: center;
+  padding: 0 11px;
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--txt);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 8px 20px -8px rgba(23, 32, 84, 0.45);
+}
+.hud { position: absolute; display: flex; gap: 6px; }
+.hud-tl { top: 12px; left: 12px; }
+.hud-tr { top: 12px; right: 12px; }
+.hud-chip {
+  height: 25px;
+  display: inline-flex; align-items: center;
+  padding: 0 11px;
+  border-radius: var(--r-pill);
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.hud-chip.accent { background: rgba(255, 255, 255, 0.92); color: #3450d4; border-color: transparent; }
+.float-ai {
+  position: absolute;
+  right: 14px; bottom: 14px;
+  height: 36px;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 12px 26px -10px rgba(23, 24, 29, 0.6);
+  transition: transform 0.12s, background 0.12s;
+}
+.float-ai:hover { transform: translateY(-1px); background: var(--ink-hover); }
+.float-ai svg { width: 14px; height: 14px; fill: #fff; }
+.strip {
+  height: 52px;
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 8px 0 10px;
+}
+.strip-label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--txt3);
+  font-weight: 700;
+}
+.umi { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--txt2); }
+.umi-track {
+  width: 110px; height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--track);
+  position: relative;
+}
+.umi-fill {
+  position: absolute; inset: 0 auto 0 0;
+  border-radius: var(--r-pill);
+  background: var(--grad);
+}
+.umi-knob {
+  position: absolute; top: 50%; left: 72%;
+  width: 12px; height: 12px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(93, 108, 249, 0.28), 0 2px 5px rgba(46, 56, 116, 0.30);
+}
+.umi-warp .umi-knob { left: 45%; }
+.umi-val { font-variant-numeric: tabular-nums; color: var(--txt3); width: 30px; font-size: 11.5px; }
+.btn-ink {
+  height: 32px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 15px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 18px -8px rgba(23, 24, 29, 0.55);
+  transition: background 0.12s;
+}
+.btn-ink:hover { background: var(--ink-hover); }
+
+.caption {
+  position: fixed;
+  left: 26px; bottom: 24px;
+  z-index: 2;
+  font-size: 11px;
+  color: var(--txt2);
+  padding: 6px 13px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-soft);
+}
+.caption b { color: var(--txt); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></svg>
+    </div>
+    <button class="rail-btn active" title="文件">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+    </button>
+    <button class="rail-btn" title="模板库">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8"/></svg>
+    </button>
+    <button class="rail-btn" title="Pass 结构">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><polygon points="12 2 2 7.5 12 13 22 7.5 12 2"/><polyline points="2 12.5 12 18 22 12.5"/><polyline points="2 17.5 12 23 22 17.5"/></svg>
+    </button>
+    <button class="rail-btn" title="Uniform">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9.5" cy="6" r="2.3" fill="#edeff9"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.3" fill="#edeff9"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7.5" cy="18" r="2.3" fill="#edeff9"/></svg>
+    </button>
+    <button class="rail-btn" title="诊断">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 12 7.5 12 10.5 5 14.5 19 17 12 21 12"/></svg>
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" title="设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="3.4"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></svg>
+    </button>
+    <button class="rail-btn rail-ai" title="AI 助手">
+      <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M11 3l1.7 4.8L17.5 9.5l-4.8 1.7L11 16l-1.7-4.8L4.5 9.5l4.8-1.7L11 3z"/><path d="M18.5 13.5l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1 1-2.5z"/></svg>
+    </button>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="brand">
+        <h1>Aurora Flow <span class="dot-mod" title="未保存修改"></span></h1>
+        <p>ShaderLab Pro · GLSL 工作台</p>
+      </div>
+      <span class="chip chip-file">main.glsl</span>
+      <div class="transport">
+        <button class="t-btn t-play" title="播放（空格）">
+          <svg viewBox="0 0 24 24"><path d="M8.5 5.5v13l10.5-6.5z" fill="currentColor"/></svg>
+        </button>
+        <button class="t-btn" title="重置（R）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 4.5 2 10 7.5 10"/><path d="M4 15a8.5 8.5 0 1 0 1.8-9.3L2 10"/></svg>
+        </button>
+        <button class="t-btn" title="序列帧导出">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2.5"/><line x1="7.5" y1="4" x2="7.5" y2="20"/><line x1="16.5" y1="4" x2="16.5" y2="20"/><line x1="3" y1="9" x2="7.5" y2="9"/><line x1="3" y1="15" x2="7.5" y2="15"/><line x1="16.5" y1="9" x2="21" y2="9"/><line x1="16.5" y1="15" x2="21" y2="15"/></svg>
+        </button>
+        <div class="timeline"><div class="tl-fill"></div><div class="tl-knob"></div></div>
+        <span class="tl-time">12.42 / 30.00 s</span>
+        <button class="chip-mini">1.0×
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      <button class="chip">查看 · Image
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <button class="chip">1.0× 分辨率
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </header>
+
+    <div class="workspace">
+      <section class="editor card">
+        <div class="tabbar">
+          <button class="tab active"><span class="tab-dot"></span>Image</button>
+          <button class="tab"><span class="tab-dot"></span>Buf A</button>
+          <button class="tab"><span class="tab-dot"></span>Buf B</button>
+          <div class="tabbar-spacer"></div>
+          <button class="tab-add" title="新建 Pass">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div class="code">
+          <div class="cl"><span class="ln">1</span><span class="cc"><span class="k">uniform float</span> <span class="u">uTime</span>;</span></div>
+          <div class="cl"><span class="ln">2</span><span class="cc"><span class="k">uniform vec2</span>  <span class="u">uResolution</span>;</span></div>
+          <div class="cl"><span class="ln">3</span><span class="cc"></span></div>
+          <div class="cl"><span class="ln">4</span><span class="cc"><span class="c">// 极光帘：随时间摆动的光带</span></span></div>
+          <div class="cl"><span class="ln">5</span><span class="cc"><span class="k">float</span> <span class="f">band</span>(<span class="k">vec2</span> uv, <span class="k">float</span> t) {</span></div>
+          <div class="cl"><span class="ln">6</span><span class="cc">    <span class="k">float</span> x = uv.x * <span class="n">3.0</span> + <span class="f">sin</span>(uv.y * <span class="n">4.0</span> + t) * <span class="n">0.35</span>;</span></div>
+          <div class="cl"><span class="ln">7</span><span class="cc">    <span class="k">return</span> <span class="f">smoothstep</span>(<span class="n">0.45</span>, <span class="n">0.0</span>, <span class="f">abs</span>(uv.y - <span class="n">0.5</span> - <span class="f">sin</span>(x + t) * <span class="n">0.18</span>));</span></div>
+          <div class="cl"><span class="ln">8</span><span class="cc">}</span></div>
+          <div class="cl"><span class="ln">9</span><span class="cc"></span></div>
+          <div class="cl"><span class="ln">10</span><span class="cc"><span class="k">void</span> <span class="f">mainImage</span>(<span class="k">out vec4</span> fragColor, <span class="k">in vec2</span> fragCoord) {</span></div>
+          <div class="cl"><span class="ln">11</span><span class="cc">    <span class="k">vec2</span> uv = fragCoord / <span class="u">uResolution</span>;</span></div>
+          <div class="cl active"><span class="ln">12</span><span class="cc">    <span class="k">float</span> t = <span class="u">uTime</span> * <span class="n">0.6</span>;</span></div>
+          <div class="cl"><span class="ln">13</span><span class="cc"></span></div>
+          <div class="cl"><span class="ln">14</span><span class="cc">    <span class="k">vec3</span> col = <span class="k">vec3</span>(<span class="n">0.02</span>, <span class="n">0.03</span>, <span class="n">0.09</span>);</span></div>
+          <div class="cl"><span class="ln">15</span><span class="cc">    col += <span class="k">vec3</span>(<span class="n">0.15</span>, <span class="n">0.85</span>, <span class="n">0.60</span>) * <span class="f">band</span>(uv, t) * <span class="n">0.85</span>;</span></div>
+          <div class="cl"><span class="ln">16</span><span class="cc">    col += <span class="k">vec3</span>(<span class="n">0.35</span>, <span class="n">0.30</span>, <span class="n">0.95</span>) * <span class="f">band</span>(uv + <span class="n">0.06</span>, t * <span class="n">1.3</span>) * <span class="n">0.60</span>;</span></div>
+          <div class="cl"><span class="ln">17</span><span class="cc">    col += <span class="k">vec3</span>(<span class="n">0.95</span>, <span class="n">0.45</span>, <span class="n">0.30</span>) * <span class="f">pow</span>(<span class="f">band</span>(uv, t * <span class="n">0.7</span>), <span class="n">3.0</span>) * <span class="n">0.35</span>;</span></div>
+          <div class="cl"><span class="ln">18</span><span class="cc"></span></div>
+          <div class="cl"><span class="ln">19</span><span class="cc">    fragColor = <span class="k">vec4</span>(col, <span class="n">1.0</span>);</span></div>
+          <div class="cl"><span class="ln">20</span><span class="cc">}</span></div>
+        </div>
+        <div class="statusline">
+          <svg class="ok-ic" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12.5 9.5 18 20 6.5"/></svg>
+          glslang 编译通过 · 0 错误 0 警告
+          <div class="statusline-right"><span>Ln 12 · Col 21</span><span>GLSL ES</span><span>UTF-8</span></div>
+        </div>
+      </section>
+
+      <section class="preview card">
+        <div class="canvas">
+          <svg class="trend" viewBox="0 0 600 300" preserveAspectRatio="none" fill="none">
+            <path d="M0 236 C 60 224, 90 180, 130 178 S 210 214, 250 196 S 320 108, 360 128 S 430 84, 470 62 S 560 52, 600 38"
+              stroke="rgba(255,255,255,0.9)" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linecap="round"/>
+            <path d="M0 236 C 60 224, 90 180, 130 178 S 210 214, 250 196 S 320 108, 360 128 S 430 84, 470 62 S 560 52, 600 38 L 600 300 L 0 300 Z"
+              fill="rgba(255,255,255,0.14)"/>
+            <circle cx="470" cy="62" r="5" fill="#fff"/>
+          </svg>
+          <div class="bubble">0.72 · Glow</div>
+          <div class="hud hud-tl"><span class="hud-chip">Pass · Image</span></div>
+          <div class="hud hud-tr">
+            <span class="hud-chip accent">60 FPS</span>
+            <span class="hud-chip">12.42 s</span>
+            <span class="hud-chip">#748</span>
+          </div>
+          <button class="float-ai">
+            <svg viewBox="0 0 24 24"><path d="M11 3l1.7 4.8L17.5 9.5l-4.8 1.7L11 16l-1.7-4.8L4.5 9.5l4.8-1.7L11 3z"/><path d="M18.5 13.5l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1 1-2.5z"/></svg>
+            AI 助手
+          </button>
+        </div>
+        <div class="strip">
+          <span class="strip-label">UNIFORM</span>
+          <div class="umi"><span>Glow</span><div class="umi-track"><div class="umi-fill" style="width:72%"></div><div class="umi-knob"></div></div><span class="umi-val">0.72</span></div>
+          <div class="umi umi-warp"><span>Warp</span><div class="umi-track"><div class="umi-fill" style="width:45%"></div><div class="umi-knob"></div></div><span class="umi-val">0.45</span></div>
+          <div style="flex:1"></div>
+          <button class="btn-ink">全部 Uniform</button>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<div class="caption"><b>M7 视觉稿 v2 · Soft Light（浅色）</b> · 与 Aurora Glass 对比用</div>
+</body>
+</html>

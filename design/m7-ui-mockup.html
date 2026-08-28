@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShaderLab Pro · M7 视觉稿 · Aurora Glass</title>
+<style>
+:root {
+  --bg0: #070a18;
+  --bg1: #0b1026;
+  --panel: rgba(148, 163, 216, 0.055);
+  --panel-strong: rgba(148, 163, 216, 0.10);
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --txt: #edf0fb;
+  --txt2: #a6aed0;
+  --txt3: #626d96;
+  --brand1: #4d6ef5;
+  --brand2: #6d5df9;
+  --glow: rgba(77, 110, 245, 0.45);
+  --ok: #3ddc97;
+  --r-card: 16px;
+  --r-ctl: 11px;
+  --r-pill: 999px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--txt);
+  background: var(--bg0);
+  overflow: hidden;
+  position: relative;
+}
+.aurora, .aurora::before, .aurora::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+.aurora {
+  background:
+    radial-gradient(52% 44% at 82% -6%, rgba(72, 100, 235, 0.50), transparent 68%),
+    radial-gradient(46% 40% at 8% 108%, rgba(91, 61, 240, 0.38), transparent 65%),
+    linear-gradient(118deg, transparent 34%, rgba(99, 102, 241, 0.13) 47%, transparent 60%),
+    linear-gradient(180deg, var(--bg1), var(--bg0));
+}
+.aurora::before {
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.4px),
+    radial-gradient(rgba(160, 175, 255, 0.035) 1px, transparent 1.4px);
+  background-size: 150px 150px, 230px 230px;
+  background-position: 0 0, 70px 90px;
+}
+.aurora::after {
+  background:
+    radial-gradient(30% 34% at 68% 34%, rgba(64, 220, 170, 0.10), transparent 70%),
+    radial-gradient(24% 30% at 40% 62%, rgba(255, 150, 90, 0.05), transparent 70%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .aurora::after { animation: drift 22s ease-in-out infinite alternate; }
+  @keyframes drift {
+    from { transform: translate3d(0, 0, 0) scale(1); }
+    to { transform: translate3d(-3%, 2%, 0) scale(1.06); }
+  }
+}
+.app { position: relative; z-index: 1; display: flex; height: 100vh; }
+
+.rail {
+  flex: 0 0 58px;
+  margin: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 44px -18px rgba(2, 5, 18, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.logo {
+  width: 32px; height: 32px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--brand1), var(--brand2));
+  display: grid; place-items: center;
+  margin-bottom: 10px;
+  box-shadow: 0 6px 18px -4px var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.logo svg { width: 16px; height: 16px; stroke: #fff; }
+.rail-btn {
+  width: 38px; height: 38px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--txt3);
+  display: grid; place-items: center;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.rail-btn:hover { background: rgba(255, 255, 255, 0.06); color: var(--txt2); }
+.rail-btn.active {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--line-strong);
+  color: var(--txt);
+}
+.rail-btn svg { width: 18px; height: 18px; }
+.rail-spacer { flex: 1; }
+.rail-ai {
+  background: linear-gradient(135deg, var(--brand1), var(--brand2));
+  color: #fff;
+  box-shadow: 0 8px 20px -6px var(--glow);
+}
+.rail-ai:hover { background: linear-gradient(135deg, #5d7cff, #7d6fff); color: #fff; }
+
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 10px 10px 10px 0; }
+.glass {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 44px -18px rgba(2, 5, 18, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.topbar {
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  margin-bottom: 10px;
+}
+.proj { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.proj-name { font-size: 14px; font-weight: 600; letter-spacing: 0.01em; white-space: nowrap; }
+.dot-mod { width: 7px; height: 7px; border-radius: 50%; background: #ffb454; box-shadow: 0 0 8px rgba(255, 180, 84, 0.7); }
+.chip-file {
+  font-size: 11.5px; color: var(--txt3);
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+}
+.transport { flex: 1; display: flex; align-items: center; justify-content: center; gap: 9px; min-width: 0; }
+.t-btn {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--txt2);
+  display: grid; place-items: center;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.t-btn:hover { background: rgba(255, 255, 255, 0.09); color: var(--txt); }
+.t-btn svg { width: 15px; height: 15px; }
+.t-play {
+  width: 36px; height: 36px;
+  border: none;
+  background: linear-gradient(135deg, var(--brand1), var(--brand2));
+  color: #fff;
+  box-shadow: 0 8px 22px -6px var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.t-play svg { width: 16px; height: 16px; }
+.timeline {
+  flex: 0 1 380px;
+  height: 24px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.045);
+  position: relative;
+  cursor: pointer;
+}
+.tl-fill {
+  position: absolute; inset: 3px auto 3px 3px;
+  width: 41%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, rgba(77, 110, 245, 0.55), rgba(109, 93, 249, 0.85));
+}
+.tl-knob {
+  position: absolute; top: 50%; left: 41%;
+  width: 13px; height: 13px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(109, 93, 249, 0.35), 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+.tl-time { font-size: 11px; color: var(--txt3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chip {
+  height: 28px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--txt2);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.chip:hover { background: rgba(255, 255, 255, 0.08); }
+.chip svg { width: 12px; height: 12px; stroke: var(--txt3); }
+
+.workspace { flex: 1; display: flex; gap: 10px; min-height: 0; }
+
+.editor { flex: 0 0 46%; display: flex; flex-direction: column; overflow: hidden; }
+.tabbar {
+  height: 42px;
+  display: flex; align-items: center; gap: 5px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  height: 28px;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 13px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  color: var(--txt3);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.tab:hover { color: var(--txt2); background: rgba(255, 255, 255, 0.04); }
+.tab.active {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--line-strong);
+  color: var(--txt);
+}
+.tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--txt3); }
+.tab.active .tab-dot { background: #6d8dff; box-shadow: 0 0 7px rgba(109, 141, 255, 0.9); }
+.tabbar-spacer { flex: 1; }
+.tab-add {
+  width: 26px; height: 26px;
+  border: none; border-radius: 8px;
+  background: transparent; color: var(--txt3);
+  display: grid; place-items: center; cursor: pointer;
+}
+.tab-add:hover { background: rgba(255, 255, 255, 0.07); color: var(--txt2); }
+.tab-add svg { width: 13px; height: 13px; }
+
+.code {
+  flex: 1;
+  overflow: auto;
+  padding: 13px 0;
+  font-family: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.75;
+}
+.cl { display: flex; white-space: pre; }
+.ln {
+  flex: 0 0 46px;
+  text-align: right;
+  padding-right: 15px;
+  color: var(--txt3);
+  opacity: 0.65;
+  user-select: none;
+}
+.cl.active .ln { color: #8ea2ff; opacity: 1; }
+.cc { padding-right: 18px; color: #dce3fa; }
+.k { color: #7fb2ff; }
+.f { color: #c9a2ff; }
+.n { color: #ffab7e; }
+.c { color: #5e6a92; font-style: italic; }
+.u { color: #5eead4; }
+.statusline {
+  height: 30px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 13px;
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--txt2);
+}
+.statusline .ok-ic { width: 13px; height: 13px; stroke: var(--ok); }
+.statusline-right { margin-left: auto; display: flex; gap: 14px; color: var(--txt3); font-variant-numeric: tabular-nums; }
+
+.preview { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+.canvas {
+  flex: 1;
+  position: relative;
+  background:
+    radial-gradient(58% 74% at 72% 18%, rgba(52, 210, 155, 0.24), transparent 62%),
+    radial-gradient(52% 66% at 28% 58%, rgba(94, 82, 245, 0.48), transparent 66%),
+    radial-gradient(70% 88% at 82% 92%, rgba(43, 96, 235, 0.40), transparent 62%),
+    radial-gradient(40% 52% at 50% 40%, rgba(140, 90, 255, 0.22), transparent 70%),
+    #05081a;
+  overflow: hidden;
+}
+.canvas::before {
+  content: "";
+  position: absolute; inset: -20%;
+  background: repeating-linear-gradient(100deg,
+    transparent 0 34px,
+    rgba(120, 230, 190, 0.05) 34px 42px,
+    transparent 42px 90px,
+    rgba(110, 120, 255, 0.07) 90px 102px,
+    transparent 102px 150px);
+  filter: blur(6px);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .canvas::before { animation: curtain 16s ease-in-out infinite alternate; }
+  @keyframes curtain {
+    from { transform: translateX(-3%); }
+    to { transform: translateX(3%); }
+  }
+}
+.hud {
+  position: absolute;
+  display: flex; gap: 6px;
+}
+.hud-tl { top: 12px; left: 12px; }
+.hud-tr { top: 12px; right: 12px; }
+.hud-chip {
+  height: 24px;
+  display: inline-flex; align-items: center;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-strong);
+  background: rgba(7, 10, 26, 0.55);
+  backdrop-filter: blur(10px);
+  font-size: 11px;
+  color: var(--txt2);
+  font-variant-numeric: tabular-nums;
+}
+.hud-chip.accent { color: #93b0ff; border-color: rgba(109, 141, 255, 0.45); }
+.preset-strip {
+  height: 42px;
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+}
+.preset-label {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  color: var(--txt3);
+  font-weight: 600;
+}
+.umi { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--txt2); }
+.umi-track {
+  width: 86px; height: 5px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.08);
+  position: relative;
+}
+.umi-fill {
+  position: absolute; inset: 0 auto 0 0;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--brand1), var(--brand2));
+}
+.umi-val { font-variant-numeric: tabular-nums; color: var(--txt3); width: 30px; }
+.float-ai {
+  position: absolute;
+  right: 14px; bottom: 56px;
+  height: 34px;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 15px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, var(--brand1), var(--brand2));
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 26px -8px var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.float-ai:hover { transform: translateY(-1px); box-shadow: 0 14px 30px -8px var(--glow); }
+.float-ai svg { width: 14px; height: 14px; }
+
+.caption {
+  position: fixed;
+  left: 14px; bottom: 12px;
+  z-index: 2;
+  font-size: 11px;
+  color: var(--txt3);
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: rgba(7, 10, 26, 0.55);
+  backdrop-filter: blur(10px);
+}
+.caption b { color: var(--txt2); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="aurora"></div>
+<div class="app">
+  <aside class="rail">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></svg>
+    </div>
+    <button class="rail-btn active" title="文件">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+    </button>
+    <button class="rail-btn" title="模板库">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8"/></svg>
+    </button>
+    <button class="rail-btn" title="Pass 结构">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><polygon points="12 2 2 7.5 12 13 22 7.5 12 2"/><polyline points="2 12.5 12 18 22 12.5"/><polyline points="2 17.5 12 23 22 17.5"/></svg>
+    </button>
+    <button class="rail-btn" title="Uniform">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9.5" cy="6" r="2.3" fill="#0b1026"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.3" fill="#0b1026"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7.5" cy="18" r="2.3" fill="#0b1026"/></svg>
+    </button>
+    <button class="rail-btn" title="诊断">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 12 7.5 12 10.5 5 14.5 19 17 12 21 12"/></svg>
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" title="设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="3.4"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></svg>
+    </button>
+    <button class="rail-btn rail-ai" title="AI 助手">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 3l1.7 4.8L17.5 9.5l-4.8 1.7L11 16l-1.7-4.8L4.5 9.5l4.8-1.7L11 3z"/><path d="M18.5 13.5l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1 1-2.5z"/></svg>
+    </button>
+  </aside>
+
+  <main class="main">
+    <header class="topbar glass">
+      <div class="proj">
+        <span class="proj-name">Aurora Flow</span>
+        <span class="dot-mod" title="未保存修改"></span>
+        <span class="chip-file">main.glsl</span>
+      </div>
+      <div class="transport">
+        <button class="t-btn t-play" title="播放（空格）">
+          <svg viewBox="0 0 24 24"><path d="M8.5 5.5v13l10.5-6.5z" fill="currentColor"/></svg>
+        </button>
+        <button class="t-btn" title="重置（R）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 4.5 2 10 7.5 10"/><path d="M4 15a8.5 8.5 0 1 0 1.8-9.3L2 10"/></svg>
+        </button>
+        <button class="t-btn" title="序列帧导出">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2.5"/><line x1="7.5" y1="4" x2="7.5" y2="20"/><line x1="16.5" y1="4" x2="16.5" y2="20"/><line x1="3" y1="9" x2="7.5" y2="9"/><line x1="3" y1="15" x2="7.5" y2="15"/><line x1="16.5" y1="9" x2="21" y2="9"/><line x1="16.5" y1="15" x2="21" y2="15"/></svg>
+        </button>
+        <div class="timeline"><div class="tl-fill"></div><div class="tl-knob"></div></div>
+        <span class="tl-time">12.42 / 30.00 s</span>
+        <button class="chip">1.0×
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      <button class="chip">查看 · Image
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <button class="chip">1.0× 分辨率
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </header>
+
+    <div class="workspace">
+      <section class="editor glass">
+        <div class="tabbar">
+          <button class="tab active"><span class="tab-dot"></span>Image</button>
+          <button class="tab"><span class="tab-dot"></span>Buf A</button>
+          <button class="tab"><span class="tab-dot"></span>Buf B</button>
+          <div class="tabbar-spacer"></div>
+          <button class="tab-add" title="新建 Pass">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div class="code">
+          <div class="cl"><span class="ln">1</span><span class="cc"><span class="k">uniform float</span> <span class="u">uTime</span>;</span></div>
+          <div class="cl"><span class="ln">2</span><span class="cc"><span class="k">uniform vec2</span>  <span class="u">uResolution</span>;</span></div>
+          <div class="cl"><span class="ln">3</span><span class="cc"></span></div>
+          <div class="cl"><span class="ln">4</span><span class="cc"><span class="c">// 极光帘：随时间摆动的光带</span></span></div>
+          <div class="cl"><span class="ln">5</span><span class="cc"><span class="k">float</span> <span class="f">band</span>(<span class="k">vec2</span> uv, <span class="k">float</span> t) {</span></div>
+          <div class="cl"><span class="ln">6</span><span class="cc">    <span class="k">float</span> x = uv.x * <span class="n">3.0</span> + <span class="f">sin</span>(uv.y * <span class="n">4.0</span> + t) * <span class="n">0.35</span>;</span></div>
+          <div class="cl"><span class="ln">7</span><span class="cc">    <span class="k">return</span> <span class="f">smoothstep</span>(<span class="n">0.45</span>, <span class="n">0.0</span>, <span class="f">abs</span>(uv.y - <span class="n">0.5</span> - <span class="f">sin</span>(x + t) * <span class="n">0.18</span>));</span></div>
+          <div class="cl"><span class="ln">8</span><span class="cc">}</span></div>
+          <div class="cl"><span class="ln">9</span><span class="cc"></span></div>
+          <div class="cl"><span class="ln">10</span><span class="cc"><span class="k">void</span> <span class="f">mainImage</span>(<span class="k">out vec4</span> fragColor, <span class="k">in vec2</span> fragCoord) {</span></div>
+          <div class="cl"><span class="ln">11</span><span class="cc">    <span class="k">vec2</span> uv = fragCoord / <span class="u">uResolution</span>;</span></div>
+          <div class="cl active"><span class="ln">12</span><span class="cc">    <span class="k">float</span> t = <span class="u">uTime</span> * <span class="n">0.6</span>;</span></div>
+          <div class="cl"><span class="ln">13</span><span class="cc"></span></div>
+          <div class="cl"><span class="ln">14</span><span class="cc">    <span class="k">vec3</span> col = <span class="k">vec3</span>(<span class="n">0.02</span>, <span class="n">0.03</span>, <span class="n">0.09</span>);</span></div>
+          <div class="cl"><span class="ln">15</span><span class="cc">    col += <span class="k">vec3</span>(<span class="n">0.15</span>, <span class="n">0.85</span>, <span class="n">0.60</span>) * <span class="f">band</span>(uv, t) * <span class="n">0.85</span>;</span></div>
+          <div class="cl"><span class="ln">16</span><span class="cc">    col += <span class="k">vec3</span>(<span class="n">0.35</span>, <span class="n">0.30</span>, <span class="n">0.95</span>) * <span class="f">band</span>(uv + <span class="n">0.06</span>, t * <span class="n">1.3</span>) * <span class="n">0.60</span>;</span></div>
+          <div class="cl"><span class="ln">17</span><span class="cc">    col += <span class="k">vec3</span>(<span class="n">0.95</span>, <span class="n">0.45</span>, <span class="n">0.30</span>) * <span class="f">pow</span>(<span class="f">band</span>(uv, t * <span class="n">0.7</span>), <span class="n">3.0</span>) * <span class="n">0.35</span>;</span></div>
+          <div class="cl"><span class="ln">18</span><span class="cc"></span></div>
+          <div class="cl"><span class="ln">19</span><span class="cc">    fragColor = <span class="k">vec4</span>(col, <span class="n">1.0</span>);</span></div>
+          <div class="cl"><span class="ln">20</span><span class="cc">}</span></div>
+        </div>
+        <div class="statusline">
+          <svg class="ok-ic" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12.5 9.5 18 20 6.5"/></svg>
+          glslang 编译通过 · 0 错误 0 警告
+          <div class="statusline-right"><span>Ln 12 · Col 21</span><span>GLSL ES</span><span>UTF-8</span></div>
+        </div>
+      </section>
+
+      <section class="preview glass">
+        <div class="canvas">
+          <div class="hud hud-tl"><span class="hud-chip">Pass · Image</span></div>
+          <div class="hud hud-tr">
+            <span class="hud-chip accent">60 FPS</span>
+            <span class="hud-chip">12.42 s</span>
+            <span class="hud-chip">#748</span>
+          </div>
+        </div>
+        <button class="float-ai">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 3l1.7 4.8L17.5 9.5l-4.8 1.7L11 16l-1.7-4.8L4.5 9.5l4.8-1.7L11 3z"/><path d="M18.5 13.5l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1 1-2.5z"/></svg>
+          AI 助手
+        </button>
+        <div class="preset-strip">
+          <span class="preset-label">UNIFORM</span>
+          <div class="umi"><span>Glow</span><div class="umi-track"><div class="umi-fill" style="width:72%"></div></div><span class="umi-val">0.72</span></div>
+          <div class="umi"><span>Warp</span><div class="umi-track"><div class="umi-fill" style="width:45%"></div></div><span class="umi-val">0.45</span></div>
+          <div style="flex:1"></div>
+          <button class="chip">全部 Uniform
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<div class="caption"><b>M7 视觉稿 v1 · Aurora Glass</b> · 静态原型，仅示意方向</div>
+</body>
+</html>

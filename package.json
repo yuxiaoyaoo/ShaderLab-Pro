@@ -1,0 +1,31 @@
+{
+  "name": "shaderlab-pro",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri",
+    "build:win": "tauri build --bundles nsis,msi",
+    "build:mac": "tauri build --bundles app,dmg",
+    "build:linux": "tauri build --bundles appimage,deb,rpm",
+    "build:desktop": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "gifenc": "^1.0.3",
+    "monaco-editor": "^0.52.2",
+    "mp4-muxer": "^5.2.2",
+    "solid-js": "^1.9.5"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5",
+    "vite-plugin-solid": "^2.11.6"
+  }
+}
