@@ -1,4 +1,4 @@
-import * as monaco from 'monaco-editor';
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import type { SrcPassId } from '../project/types';
 import { GLSL_LANGUAGE_ID } from './glslLanguage';
 import { BUILTIN_FUNCS, BUILTIN_VARS } from './glslData';

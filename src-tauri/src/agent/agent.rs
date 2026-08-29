@@ -36,8 +36,7 @@ impl ShaderAgent {
         if model_name.is_empty() {
             return Err("模型名称未配置".to_string());
         }
-        let mut builder =
-            openai::Client::builder().api_key::<BearerAuth>(api_key.to_string());
+        let mut builder = openai::Client::builder().api_key::<BearerAuth>(api_key.to_string());
         let base_url = config.base_url.trim();
         if !base_url.is_empty() && !base_url.eq_ignore_ascii_case(DEFAULT_OPENAI_BASE_URL) {
             builder = builder.base_url(base_url);

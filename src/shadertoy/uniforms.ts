@@ -5,7 +5,11 @@ export type UniformType = 'float' | 'int' | 'bool' | 'vec2' | 'vec3' | 'vec4';
 export type UniformValue = number | boolean | number[];
 
 export interface UniformDecl {
+  /** Runtime/API identity. */
   name: string;
+  /** Optional author-facing label; never participates in runtime identity or conflicts. */
+  displayName?: string;
+  label?: string;
   type: UniformType;
   def: UniformValue;
   min: number;
@@ -119,7 +123,7 @@ export function parseUniforms(
           opts = match[8].split(',').map((s) => s.trim());
         }
         const { min, max, step } = defaultRange(type);
-        map.set(name, {
+        map.set(`${ps.id}\u0000${name}`, {
           name,
           type,
           def: parseDefault(type, match[3]),
@@ -148,8 +152,9 @@ export function parseUniforms(
             step: Number.parseFloat(slider[3]),
           }
         : defaultRange(type);
-      if (!map.has(name)) {
-        map.set(name, {
+      const key = `${ps.id}\u0000${name}`;
+      if (!map.has(key)) {
+        map.set(key, {
           name,
           type,
           def: parseDefault(type, rawDef),
@@ -160,7 +165,7 @@ export function parseUniforms(
           pass: ps.id,
         });
       } else {
-        const prev = map.get(name)!;
+        const prev = map.get(key)!;
         if (slider) {
           prev.widget = 'slider';
           prev.min = min;

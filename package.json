@@ -5,9 +5,25 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node ./scripts/verify-production-bundle.mjs",
+    "verify:production-bundle": "node ./scripts/verify-production-bundle.mjs",
+    "smoke:desktop": "node ./scripts/smoke/desktop.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "verify:release-version": "node ./scripts/verify-release-version.mjs",
+    "verify:m0": "node --import ./scripts/ts-strip-loader.mjs ./scripts/verify-m0.mjs",
+    "verify:m1": "node --import ./scripts/ts-strip-loader.mjs ./scripts/verify-m1.mjs",
+    "verify:m2": "node --import ./scripts/ts-strip-loader.mjs ./scripts/verify-m2.mjs",
+    "verify:m3": "node --import ./scripts/ts-strip-loader.mjs ./scripts/verify-m3.mjs",
+    "verify:m4": "node --import ./scripts/ts-strip-loader.mjs ./scripts/verify-m4.mjs",
+    "verify:m5": "node --import ./scripts/ts-strip-loader.mjs ./scripts/verify-m5.mjs",
+    "verify:m6": "node --import ./scripts/ts-strip-loader.mjs ./scripts/verify-m6.mjs",
+    "verify:m0-m4": "npm run verify:m0 && npm run verify:m1 && npm run verify:m2 && npm run verify:m3 && npm run verify:m4",
+    "verify:m0-m5": "npm run verify:m0-m4 && npm run verify:m5",
+    "verify:m0-m6": "npm run verify:m0-m5 && npm run verify:m6",
+    "verify:graph-workspace": "node --import ./scripts/ts-strip-loader.mjs ./scripts/verify-graph-workspace.mjs",
+    "verify:product-messages": "node --import ./scripts/ts-strip-loader.mjs ./scripts/verify-product-messages.mjs",
+    "verify:all": "npm run verify:m0-m6 && npm run verify:graph-workspace && npm run verify:product-messages",
     "tauri": "tauri",
     "build:win": "tauri build --bundles nsis,msi",
     "build:mac": "tauri build --bundles app,dmg",
@@ -15,17 +31,17 @@
     "build:desktop": "tauri build"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-updater": "^2.10.1",
-    "gifenc": "^1.0.3",
-    "monaco-editor": "^0.52.2",
-    "mp4-muxer": "^5.2.2",
-    "solid-js": "^1.9.5"
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-updater": "2.10.1",
+    "gifenc": "1.0.3",
+    "monaco-editor": "0.52.2",
+    "mp4-muxer": "5.2.2",
+    "solid-js": "1.9.15"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4",
-    "typescript": "~5.8.3",
-    "vite": "^6.3.5",
-    "vite-plugin-solid": "^2.11.6"
+    "@tauri-apps/cli": "2.11.4",
+    "typescript": "5.8.3",
+    "vite": "6.4.3",
+    "vite-plugin-solid": "2.11.14"
   }
 }

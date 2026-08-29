@@ -1,4 +1,70 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// Locale-neutral parameter values shared by IPC errors and product notices.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum ProductParam {
+    String(String),
+    Integer(i64),
+    Decimal(f64),
+}
+
+impl From<String> for ProductParam {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<&str> for ProductParam {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+impl From<usize> for ProductParam {
+    fn from(value: usize) -> Self {
+        Self::Integer(value as i64)
+    }
+}
+
+impl From<u32> for ProductParam {
+    fn from(value: u32) -> Self {
+        Self::Integer(value as i64)
+    }
+}
+
+impl From<f32> for ProductParam {
+    fn from(value: f32) -> Self {
+        Self::Decimal(value as f64)
+    }
+}
+
+/// Stable product-owned notice. Rendering is intentionally deferred to the UI locale.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProductNotice {
+    pub code: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, ProductParam>,
+}
+
+impl ProductNotice {
+    pub fn new(code: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            params: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_param(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<ProductParam>,
+    ) -> Self {
+        self.params.insert(name.into(), value.into());
+        self
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -212,48 +278,49 @@ fn find_json_object(text: &str) -> Option<&str> {
 }
 
 impl ShaderResponse {
+    /// Returns only model-authored text. Product-owned summaries are emitted separately as
+    /// ProductNotice descriptors and localized by the frontend.
     pub fn display_text(&self) -> String {
         match self.intent {
-            Intent::Clarify => self
-                .clarification
-                .clone()
-                .unwrap_or_else(|| "需要更多信息，请补充描述。".to_string()),
-            Intent::Suggest => {
-                if self.suggestions.is_empty() {
-                    return "我有一些方案建议。".to_string();
-                }
-                let mut out = String::from("为你找到以下方案：\n");
-                for (i, s) in self.suggestions.iter().enumerate() {
-                    out.push_str(&format!("{}. {} —— {}\n", i + 1, s.name, s.description));
-                }
-                out.push_str("\n告诉我想选哪个，或者直接说\"你来决定\"。");
-                out
-            }
-            Intent::Generate => {
-                let lines = self
-                    .code
-                    .as_ref()
-                    .map(|c| c.fragment.lines().count())
-                    .unwrap_or(0);
-                format!(
-                    "已生成 {} 行 shader 代码，已推送到预览面板。\n你可以试试调整颜色、速度或密度。",
-                    lines
-                )
-            }
+            Intent::Clarify => self.clarification.clone().unwrap_or_default(),
             Intent::ReportError => {
-                let fb = self.error_feedback.clone().unwrap_or_default();
-                format!(
-                    "[{:?}] {}\n修复建议：{}",
-                    fb.phase, fb.message, fb.suggestion
-                )
+                let fb = self.error_feedback.as_ref();
+                fb.into_iter()
+                    .flat_map(|feedback| [&feedback.message, &feedback.suggestion])
+                    .filter(|part| !part.trim().is_empty())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n")
             }
-            Intent::Document => self
-                .documentation
-                .as_ref()
-                .map(|d| d.algorithm_explanation.clone())
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "文档已生成。".to_string()),
-            Intent::Complete => "测试通过！可以进入文档阶段，或继续调整效果。".to_string(),
+            Intent::Suggest | Intent::Generate | Intent::Document | Intent::Complete => {
+                String::new()
+            }
+        }
+    }
+
+    pub fn product_notices(&self) -> Vec<ProductNotice> {
+        match self.intent {
+            Intent::Clarify if self.clarification.as_deref().unwrap_or("").trim().is_empty() => {
+                vec![ProductNotice::new("chat.notice.clarification-required")]
+            }
+            Intent::Suggest if self.suggestions.is_empty() => {
+                vec![ProductNotice::new("chat.notice.suggestions-empty")]
+            }
+            Intent::Suggest => vec![ProductNotice::new("chat.notice.suggestions-available")
+                .with_param("count", self.suggestions.len())],
+            Intent::Generate if self.code.is_some() => {
+                vec![ProductNotice::new("chat.notice.code-generated").with_param(
+                    "lines",
+                    self.code
+                        .as_ref()
+                        .map(|code| code.fragment.lines().count())
+                        .unwrap_or(0),
+                )]
+            }
+            Intent::Generate => Vec::new(),
+            Intent::Document => vec![ProductNotice::new("chat.notice.documentation-ready")],
+            Intent::Complete => vec![ProductNotice::new("chat.notice.complete")],
+            Intent::Clarify | Intent::ReportError => Vec::new(),
         }
     }
 }

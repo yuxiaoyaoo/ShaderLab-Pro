@@ -1,6 +1,10 @@
-import { For, Show, createSignal, type Component } from 'solid-js';
+import { For, Show, createMemo, createSignal, type Component } from 'solid-js';
+import { difficultyLabel, locale, normalizeDifficulty, t, type TemplateDifficulty } from '../i18n';
+import { normalizeProductMessage, type ProductMessageDescriptor } from '../productMessage';
+import ProductMessageView from './ProductMessageView';
+import { formatProductMessage } from '../productMessageFormatter';
 import { useModalFocus } from './modalFocus';
-import type { ProjectTemplate } from '../templates';
+import { getBuiltinTemplateDisplay, type ProjectTemplate } from '../templates';
 import {
   deleteUserTemplate,
   saveUserTemplate,
@@ -13,10 +17,13 @@ interface Props {
   onClose: () => void;
   /** M6c：自定义模板池（App 维护，user-templates-changed 事件驱动刷新） */
   userTemplates: UserTemplateViewDto[];
-  onApplyUser: (t: UserTemplateViewDto) => void;
-  onPreviewUser: (t: UserTemplateViewDto) => void;
+  onApplyUser: (t: UserTemplateViewDto) => boolean | Promise<boolean>;
+  onPreviewUser: (t: UserTemplateViewDto) => boolean;
+  canApplyCode: boolean;
+  codeApplyBlockedReason?: string;
   /** M6c：一键带入编辑器当前 Image 源码 */
   editorCode: () => string;
+  requestConfirm: (options: { title: string; message: string; confirmLabel?: string; danger?: boolean }) => Promise<boolean>;
   notify: (msg: string, kind?: 'ok' | 'error') => void;
 }
 
@@ -26,7 +33,7 @@ const BLANK_CODE = `void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 }
 `;
 
-const DIFFICULTIES = ['入门', '进阶', '高级'];
+const DIFFICULTIES: readonly TemplateDifficulty[] = ['beginner', 'intermediate', 'advanced'];
 
 const TemplateDialog: Component<Props> = (props) => {
   const [formOpen, setFormOpen] = createSignal(false);
@@ -34,19 +41,40 @@ const TemplateDialog: Component<Props> = (props) => {
   const [fName, setFName] = createSignal('');
   const [fDesc, setFDesc] = createSignal('');
   const [fTags, setFTags] = createSignal('');
-  const [fDiff, setFDiff] = createSignal('入门');
+  const [fDiff, setFDiff] = createSignal<TemplateDifficulty>('beginner');
   const [fCode, setFCode] = createSignal(BLANK_CODE);
-  const [fError, setFError] = createSignal<string | null>(null);
+  const [fError, setFError] = createSignal<ProductMessageDescriptor | null>(null);
   const [busy, setBusy] = createSignal(false);
+  const [searchQuery, setSearchQuery] = createSignal('');
   let dialogRef: HTMLDivElement | undefined;
   useModalFocus(() => dialogRef);
+
+  const normalizeForSearch = (value: string) => value.toLocaleLowerCase(locale());
+  const filteredUserTemplates = createMemo(() => {
+    const query = normalizeForSearch(searchQuery().trim());
+    if (!query) return props.userTemplates;
+    return props.userTemplates.filter((template) => (
+      [template.name, template.description, ...template.tags, difficultyLabel(template.difficulty)]
+        .some((value) => normalizeForSearch(value).includes(query))
+    ));
+  });
+  const filteredProjectTemplates = createMemo(() => {
+    const currentLocale = locale();
+    const query = searchQuery().trim().toLocaleLowerCase(currentLocale);
+    if (!query) return props.templates;
+    return props.templates.filter((template) => {
+      const display = getBuiltinTemplateDisplay(template, currentLocale);
+      return [template.id, display.name, display.description]
+        .some((value) => value.toLocaleLowerCase(currentLocale).includes(query));
+    });
+  });
 
   const openCreate = (fromEditor: boolean) => {
     setEditingSlug(null);
     setFName('');
     setFDesc('');
     setFTags('');
-    setFDiff('入门');
+    setFDiff('beginner');
     const cur = props.editorCode().trim();
     setFCode(fromEditor && cur ? cur : BLANK_CODE);
     setFError(null);
@@ -57,8 +85,8 @@ const TemplateDialog: Component<Props> = (props) => {
     setEditingSlug(t.slug);
     setFName(t.name);
     setFDesc(t.description);
-    setFTags(t.tags.join('，'));
-    setFDiff(DIFFICULTIES.includes(t.difficulty) ? t.difficulty : '入门');
+    setFTags(t.tags.join(', '));
+    setFDiff(normalizeDifficulty(t.difficulty));
     setFCode(t.code);
     setFError(null);
     setFormOpen(true);
@@ -73,29 +101,38 @@ const TemplateDialog: Component<Props> = (props) => {
         name: fName(),
         description: fDesc(),
         tags: fTags()
-          .split(/[,，\s]+/)
+          .split(/[,，]+/)
+          .map((tag) => tag.trim())
           .filter(Boolean),
         difficulty: fDiff(),
         uniforms: [],
         code: fCode(),
       });
-      props.notify(editingSlug() ? '自定义模板已更新' : '自定义模板已保存', 'ok');
+      props.notify(editingSlug() ? t('template.updated') : t('template.saved'), 'ok');
       setEditingSlug(null);
       setFormOpen(false);
-    } catch (e) {
-      setFError(String(e));
+    } catch (error) {
+      setFError(normalizeProductMessage(error, 'chat.template-save-failed'));
     } finally {
       setBusy(false);
     }
   };
 
-  const removeTemplate = async (t: UserTemplateViewDto) => {
-    if (!window.confirm(`删除自定义模板「${t.name}」？此操作不可恢复。`)) return;
+  const removeTemplate = async (template: UserTemplateViewDto) => {
+    if (!await props.requestConfirm({
+      title: t('template.deleteTitle'),
+      message: t('template.deleteMessage', { name: template.name }),
+      confirmLabel: t('template.deleteConfirm'),
+      danger: true,
+    })) return;
     try {
-      await deleteUserTemplate(t.slug);
-      props.notify('自定义模板已删除', 'ok');
-    } catch (e) {
-      props.notify(String(e), 'error');
+      await deleteUserTemplate(template.slug);
+      props.notify(t('template.deleted'), 'ok');
+    } catch (error) {
+      props.notify(
+        formatProductMessage(normalizeProductMessage(error, 'chat.template-delete-failed')),
+        'error',
+      );
     }
   };
 
@@ -118,43 +155,43 @@ const TemplateDialog: Component<Props> = (props) => {
           when={!formOpen()}
           fallback={
             <>
-              <h3 id="template-dialog-title">{editingSlug() ? '编辑自定义模板' : '新建自定义模板'}</h3>
+              <h3 id="template-dialog-title">{editingSlug() ? t('template.edit') : t('template.new')}</h3>
               <div class="tpl-form">
                 <label>
-                  名称 *
+                  {t('template.name')}
                   <input
                     value={fName()}
                     maxlength={32}
-                    placeholder="≤ 32 字，如：等离子涟漪"
+                    placeholder={t('template.namePlaceholder')}
                     onInput={(e) => setFName(e.currentTarget.value)}
                   />
                 </label>
                 <label>
-                  描述
+                  {t('template.description')}
                   <input
                     value={fDesc()}
-                    placeholder="一句话说明效果与亮点"
+                    placeholder={t('template.descriptionPlaceholder')}
                     onInput={(e) => setFDesc(e.currentTarget.value)}
                   />
                 </label>
                 <div class="tpl-form-row">
                   <label>
-                    标签（逗号分隔）
+                    {t('template.tags')}
                     <input
                       value={fTags()}
-                      placeholder="如：粒子，发光"
+                      placeholder={t('template.tagsPlaceholder')}
                       onInput={(e) => setFTags(e.currentTarget.value)}
                     />
                   </label>
                   <label>
-                    难度
-                    <select value={fDiff()} onChange={(e) => setFDiff(e.currentTarget.value)}>
-                      <For each={DIFFICULTIES}>{(d) => <option value={d}>{d}</option>}</For>
+                    {t('template.difficulty')}
+                    <select value={fDiff()} onChange={(e) => setFDiff(normalizeDifficulty(e.currentTarget.value))}>
+                      <For each={DIFFICULTIES}>{(d) => <option value={d}>{difficultyLabel(d)}</option>}</For>
                     </select>
                   </label>
                 </div>
                 <label>
-                  GLSL 代码 *
+                  {t('template.code')}
                   <textarea
                     class="tpl-code"
                     spellcheck={false}
@@ -163,84 +200,97 @@ const TemplateDialog: Component<Props> = (props) => {
                     onInput={(e) => setFCode(e.currentTarget.value)}
                   />
                   <span class="tpl-form-hint">
-                    需含 mainImage 入口；iTime/iResolution 等由运行时注入，请勿声明 uniform。
+                    {t('template.codeHint')}
                   </span>
                 </label>
                 <Show when={fError()}>
-                  <pre class="tpl-form-error">{fError()}</pre>
+                  {(descriptor) => (
+                    <ProductMessageView class="tpl-form-error" value={descriptor()} compact role="alert" />
+                  )}
                 </Show>
               </div>
               <div class="modal-actions">
                 <button class="btn" disabled={busy()} onClick={() => void submitForm()}>
-                  {busy() ? '保存中…' : '保存'}
+                  {busy() ? t('common.saving') : t('common.save')}
                 </button>
                 <button class="btn" onClick={() => setFormOpen(false)}>
-                  取消
+                  {t('common.cancel')}
                 </button>
               </div>
             </>
           }
         >
-          <h3 id="template-dialog-title">模板库</h3>
+          <h3 id="template-dialog-title">{t('template.library')}</h3>
           <div class="tpl-toolbar">
             <span class="tpl-hint">
-              项目模板 {props.templates.length} 个 · 我的模板 {props.userTemplates.length} 个
+              {t('template.counts', { projects: props.templates.length, mine: props.userTemplates.length })}
             </span>
+            <input
+              type="search"
+              value={searchQuery()}
+              placeholder={t('template.searchPlaceholder')}
+              aria-label={t('template.searchAria')}
+              onInput={(e) => setSearchQuery(e.currentTarget.value)}
+            />
             <button class="btn mini" onClick={() => openCreate(true)}>
-              从当前代码新建
+              {t('template.fromCurrent')}
             </button>
             <button class="btn mini" onClick={() => openCreate(false)}>
-              ＋ 新建
+              {t('template.create')}
             </button>
           </div>
           <div class="tpl-list">
-            <Show when={props.userTemplates.length > 0}>
-              <div class="tpl-group-title">📌 我的模板</div>
-              <For each={props.userTemplates}>
-                {(t) => (
+            <Show when={filteredUserTemplates().length > 0}>
+              <div class="tpl-group-title">{t('template.mine')}</div>
+              <For each={filteredUserTemplates()}>
+                {(template) => (
                   <div class="tpl-item custom">
-                    <div class="tpl-name">{t.name}</div>
-                    <div class="tpl-desc">{t.description || t.tags.join(' · ')}</div>
+                    <div class="tpl-name">{template.name}</div>
+                    <div class="tpl-desc">{template.description || template.tags.join(' · ')}</div>
                     <div class="tpl-actions">
                       <button
                         class="btn mini"
+                        disabled={!props.canApplyCode}
+                        title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined}
                         onClick={() => {
-                          props.onPreviewUser(t);
-                          props.onClose();
+                          if (props.onPreviewUser(template)) props.onClose();
                         }}
                       >
-                        预览
+                        {t('common.preview')}
                       </button>
-                      <button class="btn mini" onClick={() => props.onApplyUser(t)}>
-                        应用
+                      <button class="btn mini" disabled={!props.canApplyCode} title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined} onClick={() => void Promise.resolve(props.onApplyUser(template)).then((ok) => { if (ok) props.onClose(); })}>
+                        {t('common.apply')}
                       </button>
-                      <button class="btn mini" onClick={() => openEdit(t)}>
-                        编辑
+                      <button class="btn mini" onClick={() => openEdit(template)}>
+                        {t('common.edit')}
                       </button>
-                      <button class="btn mini danger" onClick={() => void removeTemplate(t)}>
-                        删除
+                      <button class="btn mini danger" onClick={() => void removeTemplate(template)}>
+                        {t('common.delete')}
                       </button>
                     </div>
                   </div>
                 )}
               </For>
             </Show>
-            <div class="tpl-group-title">🧱 项目模板</div>
-            <For each={props.templates}>
-              {(t) => (
-                <div class="tpl-item">
-                  <div class="tpl-name">{t.name}</div>
-                  <div class="tpl-desc">{t.desc}</div>
-                  <button class="btn" onClick={() => props.onSelect(t)}>
-                    应用
-                  </button>
-                </div>
-              )}
+            <div class="tpl-group-title">{t('template.projects')}</div>
+            <For each={filteredProjectTemplates()}>
+              {(projectTemplate) => {
+                const display = () => getBuiltinTemplateDisplay(projectTemplate, locale());
+                return (
+                  <div class="tpl-item">
+                    <div class="tpl-name">{display().name}</div>
+                    <div class="tpl-desc">{display().description}</div>
+                    <button class="btn" onClick={() => props.onSelect(projectTemplate)}>
+                      {t('common.apply')}
+                    </button>
+                  </div>
+                );
+              }}
             </For>
           </div>
           <div class="modal-actions">
             <button class="btn" onClick={() => props.onClose()}>
-              关闭
+              {t('common.close')}
             </button>
           </div>
         </Show>

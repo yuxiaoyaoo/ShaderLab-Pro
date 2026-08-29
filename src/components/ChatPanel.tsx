@@ -6,12 +6,16 @@ import {
   onMount,
   type Component,
 } from 'solid-js';
+import { t, type TranslationKey, type TranslationParams } from '../i18n';
+import { normalizeProductMessage, type ProductMessageDescriptor } from '../productMessage';
+import ProductMessageView from './ProductMessageView';
 import {
   adoptTemplate,
   fetchPhase,
   resetSession,
   sendChatStream,
   type ErrorFeedbackDto,
+  type ProductNoticeDto,
   type ShaderDocDto,
   type TemplateSuggestionDto,
   type ValidationViewDto,
@@ -21,6 +25,10 @@ interface ChatMsg {
   id: number;
   role: 'user' | 'assistant' | 'hint';
   text: string;
+  descriptor?: ProductMessageDescriptor;
+  notices?: ProductNoticeDto[];
+  productTextKey?: TranslationKey;
+  productTextParams?: TranslationParams;
   intent?: string;
   parseOk?: boolean;
   suggestions?: TemplateSuggestionDto[];
@@ -29,53 +37,96 @@ interface ChatMsg {
   validation?: ValidationViewDto;
   candidateCode?: string;
   candidateName?: string;
+  candidateNameKey?: TranslationKey;
   candidateState?: 'ready' | 'previewing' | 'applied' | 'dismissed';
 }
 
 interface Props {
-  onApplyCode: (fragment: string) => void;
+  onApplyCode: (fragment: string) => boolean;
   /** 非破坏性预览候选代码，不覆盖用户当前版本。 */
-  onPreview: (name: string, code: string) => void;
+  onPreview: (name: string, code: string) => boolean;
+  canApplyCode: boolean;
+  codeApplyBlockedReason?: string;
   onCancelPreview: () => void;
   previewActive: boolean;
   appliedCandidateCode: string | null;
+  requestConfirm: (options: { title: string; message: string; confirmLabel?: string; danger?: boolean }) => Promise<boolean>;
   onOpenSettings: () => void;
   onClose: () => void;
 }
 
-const PHASE_HINTS: Record<string, string> = {
-  planning: '需求澄清中 —— 描述你想要的效果，或回答 AI 的追问',
-  coding: '代码已推送，可在预览中查看效果并提出调整',
-  testing: '反馈编译或渲染问题，AI 会修复；没问题就说“完成”',
-  documentation: '文档阶段 —— 可要求算法说明，或直接开始新需求',
+const PHASE_HINT_KEYS: Record<string, TranslationKey> = {
+  planning: 'chat.phase.planning',
+  coding: 'chat.phase.coding',
+  testing: 'chat.phase.testing',
+  documentation: 'chat.phase.documentation',
+};
+
+const PHASE_NAME_KEYS: Record<string, TranslationKey> = {
+  planning: 'chat.phaseName.planning',
+  coding: 'chat.phaseName.coding',
+  testing: 'chat.phaseName.testing',
+  documentation: 'chat.phaseName.documentation',
+};
+
+const INTENT_KEYS: Record<string, TranslationKey> = {
+  clarify: 'chat.intent.clarify',
+  suggest: 'chat.intent.suggest',
+  generate: 'chat.intent.generate',
+  report_error: 'chat.intent.reportError',
+  document: 'chat.intent.document',
+  complete: 'chat.intent.complete',
+};
+
+const FEEDBACK_PHASE_KEYS: Record<string, TranslationKey> = {
+  compile: 'chat.feedback.compile',
+  render: 'chat.feedback.render',
 };
 
 let nextId = 1;
 
+const feedbackMessage = (message: ChatMsg): string => {
+  const value = message.feedback?.message.trim() ?? '';
+  if (!value) return '';
+  const duplicatedByValidation = message.validation?.errors.some(
+    (error) => error.message.trim() === value,
+  );
+  return duplicatedByValidation ? '' : message.feedback!.message;
+};
+
+const showFeedback = (message: ChatMsg): boolean =>
+  Boolean(message.feedback && (feedbackMessage(message) || message.feedback.suggestion.trim()));
+
 const IntentBadge: Component<{ intent?: string }> = (props) => (
   <Show when={props.intent}>
     <span class={`chat-intent intent-${props.intent}`}>
-      {{ clarify: '澄清', suggest: '建议', generate: '生成', report_error: '纠错', document: '文档', complete: '完成' }[props.intent!] ?? props.intent}
+      {INTENT_KEYS[props.intent!] ? t(INTENT_KEYS[props.intent!]) : props.intent}
     </span>
   </Show>
 );
 
-const VALIDATION_META: Record<string, { icon: string; label: string; title?: string }> = {
-  passed: { icon: '✓', label: '编译通过' },
-  failed: { icon: '⚠', label: '编译未通过' },
-  skipped: { icon: '⊘', label: '已跳过验证' },
+const VALIDATION_META: Record<string, { icon: string; labelKey: TranslationKey }> = {
+  passed: { icon: '✓', labelKey: 'chat.validation.passed' },
+  failed: { icon: '⚠', labelKey: 'chat.validation.failed' },
+  skipped: { icon: '⊘', labelKey: 'chat.validation.skipped' },
 };
 
 const ValidationBadge: Component<{ v?: ValidationViewDto }> = (props) => {
   const meta = () => (props.v ? VALIDATION_META[props.v.status] : undefined);
+  const statusLabel = () => meta() ? t(meta()!.labelKey) : '';
   const label = () =>
-    props.v?.render?.success ? '编译+渲染通过' : meta()?.label;
+    props.v?.render?.success ? t('chat.validation.renderPassed') : statusLabel();
   const title = () => {
     if (!props.v) return undefined;
-    if (props.v.status === 'skipped') return props.v.note ?? '未检测到 glslangValidator';
+    if (props.v.status === 'skipped') return t('chat.validation.validatorUnavailable');
     if (props.v.render && !props.v.render.success && !props.v.render.unavailable_reason)
-      return props.v.note ?? '渲染验证未通过';
-    if (props.v.fix_attempts > 0) return `自动修复 ${props.v.fix_attempts} 次后${VALIDATION_META[props.v.status]?.label ?? ''}`;
+      return props.v.note ?? t('chat.validation.renderFailed');
+    if (props.v.fix_attempts > 0) {
+      return t('chat.validation.afterFixes', {
+        attempts: props.v.fix_attempts,
+        status: statusLabel(),
+      });
+    }
     return undefined;
   };
   return (
@@ -86,7 +137,9 @@ const ValidationBadge: Component<{ v?: ValidationViewDto }> = (props) => {
       >
         {meta()!.icon} {label()}
         <Show when={props.v!.fix_attempts > 0 && props.v!.status !== 'skipped'}>
-          <span class="val-attempts"> · 修复 {props.v!.fix_attempts} 次</span>
+          <span class="val-attempts">
+            {t('chat.validation.fixAttempts', { attempts: props.v!.fix_attempts })}
+          </span>
         </Show>
       </span>
     </Show>
@@ -101,13 +154,17 @@ const ValidationErrors: Component<{ v?: ValidationViewDto }> = (props) => {
         <For each={shown()}>
           {(e) => (
             <div class="verr-line">
-              <span class="verr-loc">{e.line > 0 ? `第 ${e.line} 行` : '包装层'}</span>
+              <span class="verr-loc">
+                {e.line > 0 ? t('chat.validation.errorLine', { line: e.line }) : t('chat.validation.wrapper')}
+              </span>
               <span class="verr-msg">{e.message}</span>
             </div>
           )}
         </For>
         <Show when={props.v!.errors.length > 3}>
-          <div class="verr-more">…等共 {props.v!.errors.length} 条错误</div>
+          <div class="verr-more">
+            {t('chat.validation.moreErrors', { count: props.v!.errors.length })}
+          </div>
         </Show>
       </div>
     </Show>
@@ -125,7 +182,7 @@ const RenderPreview: Component<{ v?: ValidationViewDto }> = (props) => {
         when={r()!.thumbnail_base64}
         fallback={
           <div class="render-unavailable">
-            ℹ️ 已跳过渲染预览：{r()!.unavailable_reason}
+            {t('chat.render.skipped')}
           </div>
         }
       >
@@ -133,10 +190,14 @@ const RenderPreview: Component<{ v?: ValidationViewDto }> = (props) => {
           <img
             class="chat-thumb"
             src={r()!.thumbnail_base64!}
-            alt="首帧渲染预览"
+            alt={t('chat.render.alt')}
           />
           <div class="render-stats">
-            首帧 · 亮度 {(r()!.avg_brightness * 100).toFixed(0)}% · 有效像素 {(r()!.coverage * 100).toFixed(0)}% · {r()!.render_time_ms.toFixed(1)} ms
+            {t('chat.render.stats', {
+              brightness: (r()!.avg_brightness * 100).toFixed(0),
+              coverage: (r()!.coverage * 100).toFixed(0),
+              time: r()!.render_time_ms.toFixed(1),
+            })}
           </div>
         </div>
       </Show>
@@ -149,13 +210,14 @@ const ChatPanel: Component<Props> = (props) => {
     {
       id: nextId++,
       role: 'hint',
-      text: '描述你想要的 shader 效果（例：「做一个蓝色流动水波纹背景」），AI 会先确认需求再生成代码。',
+      text: '',
+      productTextKey: 'chat.initialHint',
     },
   ]);
   const [input, setInput] = createSignal('');
   const [busy, setBusy] = createSignal(false);
   const [phaseId, setPhaseId] = createSignal('planning');
-  const [phaseName, setPhaseName] = createSignal('规划');
+  const [phaseName, setPhaseName] = createSignal('');
   /** M5：进行中回合的 LLM 增量直播文本；完成后清空并由富结构整包替换 */
   const [streamText, setStreamText] = createSignal('');
   const [activePreviewId, setActivePreviewId] = createSignal<number | null>(null);
@@ -207,6 +269,7 @@ const ChatPanel: Component<Props> = (props) => {
       pushMsg({
         role: 'assistant',
         text: r.text,
+        notices: r.notices,
         intent: r.intent,
         parseOk: r.parse_ok,
         suggestions: r.suggestions.length ? r.suggestions : undefined,
@@ -214,13 +277,14 @@ const ChatPanel: Component<Props> = (props) => {
         feedback: r.error_feedback,
         validation: r.validation,
         candidateCode: candidate,
-        candidateName: candidate ? 'AI 生成方案' : undefined,
+        candidateNameKey: candidate ? 'chat.candidate.generatedName' : undefined,
         candidateState: candidate ? 'ready' : undefined,
       });
     } catch (e) {
       pushMsg({
         role: 'assistant',
-        text: e instanceof Error ? e.message : String(e),
+        text: '',
+        descriptor: normalizeProductMessage(e, 'chat.request-failed'),
         intent: 'report_error',
       });
     } finally {
@@ -228,8 +292,13 @@ const ChatPanel: Component<Props> = (props) => {
     }
   };
 
-  const doReset = () => {
-    if (!window.confirm('清空当前 AI 会话？阶段与上下文将重置。')) return;
+  const doReset = async () => {
+    if (!await props.requestConfirm({
+      title: t('chat.resetTitle'),
+      message: t('chat.resetMessage'),
+      confirmLabel: t('chat.resetConfirm'),
+      danger: true,
+    })) return;
     void resetSession()
       .then(() => fetchPhase())
       .then((p) => {
@@ -239,12 +308,18 @@ const ChatPanel: Component<Props> = (props) => {
           {
             id: nextId++,
             role: 'hint',
-            text: '会话已重置。描述一个新效果开始吧！',
+            text: '',
+            productTextKey: 'chat.resetDone',
           },
         ]);
       })
       .catch((e) =>
-        pushMsg({ role: 'assistant', text: e instanceof Error ? e.message : String(e), intent: 'report_error' }),
+        pushMsg({
+          role: 'assistant',
+          text: '',
+          descriptor: normalizeProductMessage(e, 'chat.state-unavailable'),
+          intent: 'report_error',
+        }),
       );
   };
 
@@ -252,7 +327,12 @@ const ChatPanel: Component<Props> = (props) => {
   const useSuggestion = (s: TemplateSuggestionDto) => {
     if (busy()) return;
     setBusy(true);
-    pushMsg({ role: 'user', text: `用此方案：「${s.name}」` });
+    pushMsg({
+      role: 'user',
+      text: '',
+      productTextKey: 'chat.action.useSuggestion',
+      productTextParams: { name: s.name },
+    });
     adoptTemplate(s.name)
       .then((r) => {
         setPhaseId(r.phase_id);
@@ -261,6 +341,7 @@ const ChatPanel: Component<Props> = (props) => {
         pushMsg({
           role: 'assistant',
           text: r.text,
+          notices: r.notices,
           intent: r.intent,
           suggestions: undefined,
           candidateCode: candidate || undefined,
@@ -271,7 +352,8 @@ const ChatPanel: Component<Props> = (props) => {
       .catch((e: unknown) => {
         pushMsg({
           role: 'assistant',
-          text: e instanceof Error ? e.message : String(e),
+          text: '',
+          descriptor: normalizeProductMessage(e, 'chat.template-adopt-failed'),
           intent: 'report_error',
         });
       })
@@ -280,9 +362,9 @@ const ChatPanel: Component<Props> = (props) => {
 
   const previewSuggestion = (s: TemplateSuggestionDto) => {
     if (!s.code.trim()) return;
+    if (!props.onPreview(s.name, s.code)) return;
     clearPreviewMarkers();
     setActivePreviewId(null);
-    props.onPreview(s.name, s.code);
   };
 
   const setCandidateState = (id: number, state: ChatMsg['candidateState']) => {
@@ -312,18 +394,23 @@ const ChatPanel: Component<Props> = (props) => {
     ));
   };
 
+  const candidateName = (
+    m: ChatMsg,
+    fallbackKey: TranslationKey,
+  ) => m.candidateName ?? (m.candidateNameKey ? t(m.candidateNameKey) : t(fallbackKey));
+
   const previewCandidate = (m: ChatMsg) => {
     if (!m.candidateCode) return;
+    if (!props.onPreview(candidateName(m, 'chat.candidate.previewName'), m.candidateCode)) return;
     clearPreviewMarkers(m.id);
-    props.onPreview(m.candidateName ?? 'AI 候选方案', m.candidateCode);
     setActivePreviewId(m.id);
     setCandidateState(m.id, 'previewing');
   };
 
   const applyCandidate = (m: ChatMsg) => {
     if (!m.candidateCode) return;
+    if (!props.onApplyCode(m.candidateCode)) return;
     clearPreviewMarkers();
-    props.onApplyCode(m.candidateCode);
     setActivePreviewId(null);
     setCandidateState(m.id, 'applied');
   };
@@ -347,7 +434,7 @@ const ChatPanel: Component<Props> = (props) => {
   };
 
   return (
-    <aside class="chat-panel" aria-label="AI 助手">
+    <aside class="chat-panel" aria-label={t('chat.title')}>
       <div class="chat-head">
         <span class="chat-title">
           <svg class="chat-title-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -361,26 +448,26 @@ const ChatPanel: Component<Props> = (props) => {
             <path d="M12 5.5l1.6 4.4 4.4 1.6-4.4 1.6L12 17.5l-1.6-4.4L6 11.5l4.4-1.6L12 5.5z" fill="#fff" />
             <path d="M17.6 14.9l0.8 2 2 0.8-2 0.8-0.8 2-0.8-2-2-0.8 2-0.8 0.8-2z" fill="#fff" opacity="0.85" />
           </svg>
-          AI 助手
+          {t('chat.title')}
         </span>
-        <span class={`chat-phase-badge phase-${phaseId()}`}>{phaseName()}</span>
+        <span class={`chat-phase-badge phase-${phaseId()}`}>{PHASE_NAME_KEYS[phaseId()] ? t(PHASE_NAME_KEYS[phaseId()]) : phaseName()}</span>
         <span class="spacer" />
-        <button class="btn mini" onClick={props.onOpenSettings} title="AI 服务设置">
-          ⚙ 设置
+        <button class="btn mini" onClick={props.onOpenSettings} title={t('chat.settingsTitle')}>
+          {t('chat.settings')}
         </button>
-        <button class="btn mini" onClick={doReset} title="清空会话并回到规划阶段">
-          ⟲ 新会话
+        <button class="btn mini" onClick={() => void doReset()} title={t('chat.newSessionTitle')}>
+          {t('chat.newSession')}
         </button>
         <button
           class="btn mini chat-close"
           onClick={props.onClose}
-          title="关闭 AI 助手"
-          aria-label="关闭 AI 助手"
+          title={t('chat.close')}
+          aria-label={t('chat.close')}
         >
           ×
         </button>
       </div>
-      <div class="chat-hint">{PHASE_HINTS[phaseId()] ?? ''}</div>
+      <div class="chat-hint">{props.canApplyCode ? (PHASE_HINT_KEYS[phaseId()] ? t(PHASE_HINT_KEYS[phaseId()]) : '') : (props.codeApplyBlockedReason ?? t('chat.graphBlocked'))}</div>
       <div class="chat-msgs" ref={listRef} aria-live="polite" aria-busy={busy()}>
         <For each={msgs()}>
           {(m) => (
@@ -390,33 +477,46 @@ const ChatPanel: Component<Props> = (props) => {
                   <div class="msg-meta">
                     <IntentBadge intent={m.intent} />
                     <Show when={m.parseOk === false}>
-                      <span class="chat-intent warn">未解析</span>
+                      <span class="chat-intent warn">{t('chat.parse.unparsed')}</span>
                     </Show>
                     <ValidationBadge v={m.validation} />
                   </div>
                 </Show>
-                <div class="msg-text">{m.text}</div>
+                <Show when={m.productTextKey || (m.text.trim() && !(m.intent === 'report_error' && m.feedback))}>
+                  <div class="msg-text">
+                    {m.productTextKey ? t(m.productTextKey, m.productTextParams) : m.text}
+                  </div>
+                </Show>
+                <Show when={m.descriptor}>
+                  {(descriptor) => <ProductMessageView class="msg-text" value={descriptor()} compact />}
+                </Show>
+                <For each={m.notices ?? []}>
+                  {(notice) => <ProductMessageView class="msg-text" value={notice} compact />}
+                </For>
                 <Show when={m.candidateCode}>
                   <div class={`chat-candidate state-${m.candidateState ?? 'ready'}`}>
                     <div class="candidate-head">
                       <span>
-                        候选代码 · {m.candidateName ?? 'AI 方案'} · {m.candidateCode!.split('\n').length} 行
+                        {t('chat.candidate', {
+                          name: candidateName(m, 'chat.candidate.defaultName'),
+                          lines: m.candidateCode!.split('\n').length,
+                        })}
                       </span>
                       <Show when={m.candidateState === 'applied'}>
-                        <span class="candidate-state">✓ 已应用</span>
+                        <span class="candidate-state">{t('chat.applied')}</span>
                       </Show>
                       <Show when={m.candidateState === 'dismissed'}>
-                        <span class="candidate-state">已放弃</span>
+                        <span class="candidate-state">{t('chat.dismissed')}</span>
                       </Show>
                     </div>
                     <Show when={m.candidateState !== 'applied' && m.candidateState !== 'dismissed'}>
                       <div class="candidate-actions">
-                        <button class="btn mini" onClick={() => previewCandidate(m)}>
-                          {m.candidateState === 'previewing' ? '刷新预览' : '临时预览'}
+                        <button class="btn mini" disabled={!props.canApplyCode} title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined} onClick={() => previewCandidate(m)}>
+                          {m.candidateState === 'previewing' ? t('chat.refreshPreview') : t('chat.tempPreview')}
                         </button>
-                        <button class="btn mini" onClick={() => void copyCandidate(m)}>复制代码</button>
-                        <button class="btn mini" onClick={() => dismissCandidate(m)}>放弃</button>
-                        <button class="btn mini primary" onClick={() => applyCandidate(m)}>应用到 Image</button>
+                        <button class="btn mini" onClick={() => void copyCandidate(m)}>{t('chat.copyCode')}</button>
+                        <button class="btn mini" onClick={() => dismissCandidate(m)}>{t('chat.dismiss')}</button>
+                        <button class="btn mini primary" disabled={!props.canApplyCode} title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined} onClick={() => applyCandidate(m)}>{t('chat.applyImage')}</button>
                       </div>
                     </Show>
                   </div>
@@ -433,12 +533,12 @@ const ChatPanel: Component<Props> = (props) => {
                           <div class="suggest-desc">{s.description}</div>
                           <div class="suggest-actions">
                             <Show when={s.code.trim()}>
-                              <button class="btn mini" onClick={() => previewSuggestion(s)}>
-                                先看效果
+                              <button class="btn mini" disabled={!props.canApplyCode} title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined} onClick={() => previewSuggestion(s)}>
+                                {t('chat.seeEffect')}
                               </button>
                             </Show>
                             <button class="btn mini primary" onClick={() => useSuggestion(s)}>
-                              用此方案
+                              {t('chat.useThis')}
                             </button>
                           </div>
                         </div>
@@ -447,11 +547,15 @@ const ChatPanel: Component<Props> = (props) => {
                   </div>
                 </Show>
 
-                <Show when={m.feedback}>
+                <Show when={showFeedback(m)}>
                   <div class="chat-feedback">
                     <div class="fb-line">
-                      <span class="fb-phase">{m.feedback!.phase || 'compile'}</span>
-                      {m.feedback!.message}
+                      <span class="fb-phase">
+                        {FEEDBACK_PHASE_KEYS[m.feedback!.phase]
+                          ? t(FEEDBACK_PHASE_KEYS[m.feedback!.phase])
+                          : (m.feedback!.phase || t('chat.feedback.compile'))}
+                      </span>
+                      {feedbackMessage(m)}
                     </div>
                     <Show when={m.feedback!.suggestion}>
                       <div class="fb-suggestion">💡 {m.feedback!.suggestion}</div>
@@ -461,7 +565,7 @@ const ChatPanel: Component<Props> = (props) => {
 
                 <Show when={m.doc}>
                   <details class="chat-doc">
-                    <summary>📄 算法说明</summary>
+                    <summary>{t('chat.algorithm')}</summary>
                     <p>{m.doc!.algorithm_explanation}</p>
                     <Show when={m.doc!.inline_comments.trim().length > 0}>
                       <pre class="doc-comments">{m.doc!.inline_comments}</pre>
@@ -470,9 +574,9 @@ const ChatPanel: Component<Props> = (props) => {
                       <table class="doc-params">
                         <thead>
                           <tr>
-                            <th>参数</th>
-                            <th>范围</th>
-                            <th>作用</th>
+                            <th>{t('chat.parameter')}</th>
+                            <th>{t('chat.range')}</th>
+                            <th>{t('chat.effect')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -502,7 +606,7 @@ const ChatPanel: Component<Props> = (props) => {
             <Show
               when={streamText()}
               fallback={
-                <div class="msg-bubble typing">思考中…</div>
+                <div class="msg-bubble typing">{t('chat.thinking')}</div>
               }
             >
               <div class="msg-bubble msg-text stream-cursor">{streamText()}</div>
@@ -515,7 +619,7 @@ const ChatPanel: Component<Props> = (props) => {
           ref={inputRef}
           class="chat-input"
           rows="2"
-          placeholder="描述效果或提出修改…（Enter 发送 / Shift+Enter 换行）"
+          placeholder={t('chat.placeholder')}
           value={input()}
           disabled={busy()}
           onInput={(e) => setInput(e.currentTarget.value)}
@@ -531,7 +635,7 @@ const ChatPanel: Component<Props> = (props) => {
           disabled={busy() || !input().trim()}
           onClick={() => void send()}
         >
-          发送
+          {t('chat.send')}
         </button>
       </div>
     </aside>

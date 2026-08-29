@@ -46,7 +46,10 @@ impl SessionContext {
             parts.push(format!("已确认需求: {}", req));
         }
         if let Some(code) = &self.current_code {
-            parts.push(format!("当前代码长度: {} 行", code.fragment.lines().count()));
+            parts.push(format!(
+                "当前代码长度: {} 行",
+                code.fragment.lines().count()
+            ));
         }
         parts.push(format!(
             "验证状态: {}",

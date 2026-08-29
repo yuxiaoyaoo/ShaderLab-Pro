@@ -1,3 +1,4 @@
+import { ProductError, type ProductMessageDescriptor } from '../productMessage';
 import type { BufferId, PassChannelCfg, ProjectSources, ShaderlabProject } from '../project/types';
 import { BUFFER_IDS, sourcesWithDefaults } from '../project/types';
 
@@ -78,7 +79,7 @@ export interface ShadertoyImport {
   >;
   sound: boolean;
   skippedChannels: { ctype: string; count: number }[];
-  warnings: string[];
+  warnings: ProductMessageDescriptor[];
 }
 
 const SAMPLER_DEFAULT: Required<StSampler> = {
@@ -115,20 +116,23 @@ export function parseShadertoyJson(text: string): ShadertoyImport {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
-  } catch {
-    throw new Error('JSON 解析失败：不是有效的 Shadertoy 导出文件');
+  } catch (error) {
+    throw new ProductError({
+      code: 'shadertoy.invalid-json',
+      rawDetail: error instanceof Error ? error.message : String(error),
+    });
   }
-  if (!isObj(raw)) throw new Error('无效的 Shadertoy JSON：根节点不是对象');
+  if (!isObj(raw)) throw new ProductError({ code: 'shadertoy.root-invalid' });
   const root = raw as StRootLoose;
   const shader = isObj(root.shader) ? root.shader : root;
   const passes = shader.renderpass;
   if (!Array.isArray(passes) || passes.length === 0) {
-    throw new Error('无效的 Shadertoy JSON：缺少 renderpass 数组');
+    throw new ProductError({ code: 'shadertoy.renderpass-missing' });
   }
 
   const info = isObj(shader.info) ? shader.info : {};
   const result: ShadertoyImport = {
-    name: toStr(info.name, 'Shadertoy 导入'),
+    name: toStr(info.name),
     description: toStr(info.description),
     sources: { image: '', common: '' },
     buffers: {},
@@ -165,7 +169,7 @@ export function parseShadertoyJson(text: string): ShadertoyImport {
         break;
       case 'buffer': {
         if (bufferSeq >= BUFFER_IDS.length) {
-          result.warnings.push('存在超过 4 个 Buffer Pass，已忽略多余的');
+          result.warnings.push({ code: 'shadertoy.warning.extra-buffers' });
           break;
         }
         const bid = BUFFER_IDS[bufferSeq++];
@@ -179,7 +183,7 @@ export function parseShadertoyJson(text: string): ShadertoyImport {
   }
 
   if (!result.sources.image.trim()) {
-    throw new Error('无效的 Shadertoy JSON：缺少 Image Pass 代码');
+    throw new ProductError({ code: 'shadertoy.image-missing' });
   }
 
   // 通道映射辅助：channel 索引 + sampler 归一化
@@ -208,7 +212,7 @@ export function parseShadertoyJson(text: string): ShadertoyImport {
           cfgs.push(toChannelCfg(inp, target));
           continue;
         }
-        noteSkipped('buffer（引用缺失）');
+        noteSkipped('buffer-missing-reference');
         continue;
       }
       noteSkipped(toStr(inp.ctype, 'unknown'));
@@ -231,11 +235,10 @@ export function parseShadertoyJson(text: string): ShadertoyImport {
 
   result.skippedChannels = [...skippedMap.entries()].map(([ctype, count]) => ({ ctype, count }));
   if (result.skippedChannels.length > 0) {
-    result.warnings.push(
-      `已跳过 ${result.skippedChannels
-        .map((s) => `${s.ctype}×${s.count}`)
-        .join('、')} 通道（外部纹理/设备输入暂不支持互通）`,
-    );
+    result.warnings.push({
+      code: 'shadertoy.warning.channels-skipped',
+      params: { count: result.skippedChannels.reduce((sum, item) => sum + item.count, 0) },
+    });
   }
   result.sources = sourcesWithDefaults(result.sources);
   return result;
@@ -263,12 +266,13 @@ export function toShadertoyJson(meta: ShaderlabProject, sources: ProjectSources)
 
   const imageSrc = sources.image ?? '';
   if (!imageSrc.trim()) {
-    throw new Error('Image Pass 为空，无法导出为 Shadertoy JSON');
+    throw new ProductError({ code: 'shadertoy.image-empty' });
   }
 
   // id 分配顺序：image → bufferA–D → sound → common
   const imagePass = emptyPass('image', 'Image');
   imagePass.outputs = [{ id: nextId++, channel: 0 }];
+  imagePass.code = imageSrc;
   renderpass.push(imagePass);
 
   for (const bid of BUFFER_IDS) {
@@ -350,7 +354,7 @@ export function toShadertoyJson(meta: ShaderlabProject, sources: ProjectSources)
         id: '',
         date: '0',
         viewed: 0,
-        name: meta.name || '未命名项目',
+        name: meta.name || 'ShaderLab Project',
         username: 'ShaderLab Pro',
         description: meta.description ?? '',
         likes: 0,

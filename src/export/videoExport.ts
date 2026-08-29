@@ -1,4 +1,6 @@
+import { ProductError } from '../productMessage';
 import type { AudioPCM, RuntimeApi } from '../shadertoy/runtime';
+import { pickVideoMime } from './videoExportCapabilities';
 
 export interface VideoExportOpts {
   start: number;
@@ -19,43 +21,6 @@ export interface VideoExportResult {
   audioUsed: boolean;
 }
 
-const MIME_CANDIDATES = [
-  'video/webm;codecs=vp9',
-  'video/webm;codecs=vp8',
-  'video/webm',
-];
-
-const MIME_CANDIDATES_AUDIO = [
-  'video/webm;codecs=vp9,opus',
-  'video/webm;codecs=vp8,opus',
-  'video/webm;codecs=opus',
-  'video/webm;codecs=vp9,vorbis',
-  'video/webm;codecs=vp8,vorbis',
-];
-
-export function pickVideoMime(withAudio = false): string | null {
-  if (typeof MediaRecorder === 'undefined') return null;
-  const list = withAudio ? [...MIME_CANDIDATES_AUDIO, ...MIME_CANDIDATES] : MIME_CANDIDATES;
-  for (const m of list) {
-    try {
-      if (MediaRecorder.isTypeSupported(m)) return m;
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
-export function isVideoExportSupported(): boolean {
-  return typeof MediaRecorder !== 'undefined' && !!pickVideoMime();
-}
-
-export function describeMime(mime: string): string {
-  if (mime.includes('vp9')) return 'WebM · VP9';
-  if (mime.includes('vp8')) return 'WebM · VP8';
-  return 'WebM';
-}
-
 export async function exportVideo(
   api: RuntimeApi,
   opts: VideoExportOpts,
@@ -72,7 +37,7 @@ export async function exportVideo(
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('无法创建视频编码画布');
+  if (!ctx) throw new ProductError({ code: 'export.canvas-unavailable', params: { format: 'WebM' } });
   let videoStream: MediaStream | null = null;
   let track: CanvasCaptureMediaStreamTrack | null = null;
   let audioCtx: AudioContext | null = null;
@@ -93,12 +58,15 @@ export async function exportVideo(
       1 / fps,
       { width, height },
     );
-    if (!blob) throw new Error(`第 ${frameIndex + 1} 帧捕获失败`);
+    if (!blob) throw new ProductError({ code: 'export.frame-capture-failed', params: { frame: frameIndex + 1 } });
     const bmp = await createImageBitmap(blob);
     if (bmp.width !== width || bmp.height !== height) {
       const actualSize = `${bmp.width}×${bmp.height}`;
       bmp.close();
-      throw new Error(`第 ${frameIndex + 1} 帧尺寸不匹配：捕获为 ${actualSize}，期望 ${width}×${height}`);
+      throw new ProductError({
+        code: 'export.frame-size-mismatch',
+        params: { frame: frameIndex + 1, actual: actualSize, expected: `${width}×${height}` },
+      });
     }
     try {
       ctx.drawImage(bmp, 0, 0);

@@ -565,7 +565,9 @@ async fn pipeline_fix_once_then_pass_promotes_to_documentation() {
     assert!(v.errors.is_empty());
 
     assert_eq!(out.final_phase, Phase::Documentation);
-    assert!(out.reply_display.contains("✅"));
+    assert!(out.reply_display.is_empty());
+    assert!(out.notices.iter().any(|notice| notice.code == "chat.notice.compile-passed"));
+    assert!(out.notices.iter().any(|notice| notice.code == "chat.notice.render-passed"));
 
     let code = out.final_code.as_ref().expect("final code present");
     assert!(code.fragment.contains("iTime * uSpeed"), "应为修复后的代码");
@@ -595,7 +597,7 @@ async fn pipeline_exhausted_retries_fall_back_to_coding_with_standard_suggestion
     assert_eq!(v.fix_attempts, MAX_FIX_ATTEMPTS);
     assert_eq!(v.errors.len(), 1);
     assert!(v.errors[0].message.contains("SCENE_B_STILL_BROKEN"));
-    assert_eq!(v.note.as_deref(), Some("已自动尝试修复 3/3 次"));
+    assert!(v.note.is_none());
 
     assert_eq!(out.final_phase, Phase::Coding);
 
@@ -608,8 +610,8 @@ async fn pipeline_exhausted_retries_fall_back_to_coding_with_standard_suggestion
     assert_eq!(fb.line, Some(5));
     assert!(fb.message.contains("SCENE_B_STILL_BROKEN"));
     assert!(
-        fb.suggestion.contains("已重试 3 次仍未通过"),
-        "无 unfixable_reason 时应使用标准兜底文案，实际：{}",
+        fb.suggestion.is_empty(),
+        "无模型替代建议时不应注入固定产品文案，实际：{}",
         fb.suggestion
     );
 
@@ -642,11 +644,6 @@ async fn pipeline_llm_surrender_surfaces_alternative_suggestion() {
     assert_eq!(out.final_phase, Phase::Coding);
 
     let fb = out.response.error_feedback.as_ref().expect("放弃路径必须产出反馈");
-    assert!(
-        fb.suggestion.starts_with("AI 无法自行修复："),
-        "有 unfixable_reason 时应使用定制文案开头，实际：{}",
-        fb.suggestion
-    );
     assert!(fb.suggestion.contains("该效果依赖外部纹理数据"), "须携带 LLM 报告的原因");
     assert!(fb.suggestion.contains("纯数学噪声替代纹理采样"), "须携带 LLM 给出的替代方案");
 
@@ -808,11 +805,13 @@ async fn pipeline_render_unavailable_degrades_to_passed_with_note() {
     assert!(rr.thumbnail_base64.is_none());
     assert_eq!(
         v.note.as_deref(),
-        Some("渲染预览不可用：测试模拟：无可用 GPU 适配器")
+        Some("测试模拟：无可用 GPU 适配器")
     );
 
     assert_eq!(out.final_phase, Phase::Documentation);
-    assert!(out.reply_display.contains("ℹ️ 本机未检测到可用 GPU"));
+    assert!(out.reply_display.is_empty());
+    assert!(out.notices.iter().any(|notice| notice.code == "chat.notice.compile-passed"));
+    assert!(out.notices.iter().any(|notice| notice.code == "chat.notice.render-skipped"));
     assert_eq!(hist.len(), 4, "渲染不可用不应追加任何 LLM 调用");
 }
 
@@ -850,7 +849,8 @@ async fn pipeline_black_frame_triggers_render_fix_then_passes() {
     assert!(rr.thumbnail_base64.is_some());
 
     assert_eq!(out.final_phase, Phase::Documentation);
-    assert!(out.reply_display.contains("🖼️ 首帧渲染验证通过"));
+    assert!(out.reply_display.is_empty());
+    assert!(out.notices.iter().any(|notice| notice.code == "chat.notice.render-passed"));
     assert_eq!(hist.len(), 6, "生成 + 编译修复 + 渲染修复 = 3 次调用 × 2 条");
 }
 
@@ -880,25 +880,12 @@ async fn pipeline_black_frame_budget_exhaustion_fails_with_render_feedback() {
         "编译修复 1 次 + 渲染修复 3 次（预算上限）"
     );
     assert!(v.errors.is_empty(), "黑帧无 GPU 端错误行，errors 应为空");
-    assert_eq!(v.note.as_deref(), Some("渲染验证未通过（已重试 3/3 次）"));
+    assert!(v.note.is_none());
 
     assert_eq!(out.final_phase, Phase::Coding);
-    assert!(!out.reply_display.contains("✅"), "失败轮不得携带通过标记");
-    assert!(!out.reply_display.contains("🖼️"), "无有效首帧不得宣称渲染通过");
-
-    let fb = out
-        .response
-        .error_feedback
-        .as_ref()
-        .expect("黑帧耗尽必须产出渲染阶段反馈");
-    assert_eq!(fb.phase, "render");
-    assert_eq!(fb.line, None, "黑帧无错误行号");
-    assert!(fb.message.contains("全黑"), "实际：{}", fb.message);
-    assert!(
-        fb.suggestion.contains("已重试 3/3"),
-        "应提示渲染修复预算已耗尽，实际：{}",
-        fb.suggestion
-    );
+    assert!(out.reply_display.is_empty());
+    assert!(out.notices.iter().any(|notice| notice.code == "chat.notice.render-failed"));
+    assert!(out.response.error_feedback.is_none(), "产品摘要由 notice 表达，黑帧无外部错误文本");
 
     let rr = v.render.as_ref().expect("最终渲染报告仍须回传供前端展示");
     assert!(rr.success && rr.is_black_frame);

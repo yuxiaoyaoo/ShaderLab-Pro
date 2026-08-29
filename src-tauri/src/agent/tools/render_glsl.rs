@@ -120,7 +120,9 @@ fn scan_extra_uniforms(body: &str) -> Result<Vec<(String, u64, bool)>, String> {
             _ => None,
         };
         let Some((sz, samp)) = spec else {
-            return Err(format!("暂不支持的 uniform 类型以进行渲染验证：uniform {ty} {name};"));
+            return Err(format!(
+                "暂不支持的 uniform 类型以进行渲染验证：uniform {ty} {name};"
+            ));
         };
         if !out.iter().any(|(n, _, _)| n == name) {
             out.push((name.to_string(), sz, samp));
@@ -160,8 +162,7 @@ pub fn wrap_fragment_wgpu(user_source: &str) -> Result<String, String> {
     }
     let (inject_time, inject_delta, inject_frame) = scalar_block_members(body_src);
     if inject_time || inject_delta || inject_frame {
-        let mut blk =
-            String::from("layout(std140, set = 0, binding = 1) uniform SLScalars {\n");
+        let mut blk = String::from("layout(std140, set = 0, binding = 1) uniform SLScalars {\n");
         if inject_time {
             blk.push_str("    float iTime;\n");
         }
@@ -248,8 +249,16 @@ pub fn analyze_frame(pixels: &[u8], width: u32, height: u32) -> (f32, f32, bool,
             active += 1;
         }
     }
-    let avg = if px == 0 { 0.0 } else { (sum_luma / px as f64) as f32 };
-    let cov = if px == 0 { 0.0 } else { active as f32 / px as f32 };
+    let avg = if px == 0 {
+        0.0
+    } else {
+        (sum_luma / px as f64) as f32
+    };
+    let cov = if px == 0 {
+        0.0
+    } else {
+        active as f32 / px as f32
+    };
     (avg, cov, avg < BLACK_FRAME_LUMA, avg > WHITE_FRAME_LUMA)
 }
 
@@ -288,7 +297,10 @@ async fn request_adapter_and_device(
 ) -> Result<(Arc<Mutex<Vec<String>>>, wgpu::Device, wgpu::Queue), (bool, String)> {
     let dyn_errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-    let adapter = match instance.request_adapter(&wgpu::RequestAdapterOptions::default()).await {
+    let adapter = match instance
+        .request_adapter(&wgpu::RequestAdapterOptions::default())
+        .await
+    {
         Ok(a) => a,
         Err(_) => {
             return Err((true, "无法获取 GPU 适配器，离屏渲染已跳过".to_string()));
@@ -308,7 +320,12 @@ async fn request_adapter_and_device(
 }
 
 /// 供管线调用的入口：渲染并分析一帧。
-pub async fn render_fragment(fragment_source: &str, width: u32, height: u32, time: f32) -> RenderReport {
+pub async fn render_fragment(
+    fragment_source: &str,
+    width: u32,
+    height: u32,
+    time: f32,
+) -> RenderReport {
     let start = Instant::now();
     let elapsed = |s: Instant| s.elapsed().as_secs_f64() * 1000.0;
 
@@ -333,7 +350,11 @@ pub async fn render_fragment(fragment_source: &str, width: u32, height: u32, tim
     };
 
     // —— 离屏纹理 ——
-    let extent = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+    let extent = wgpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    };
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("offscreen"),
         size: extent,
@@ -354,8 +375,7 @@ pub async fn render_fragment(fragment_source: &str, width: u32, height: u32, tim
     res_data[8..12].copy_from_slice(&aspect.to_le_bytes());
 
     // 标量数据按包装器决定注入的成员子集依序紧凑写入（std140 同序）
-    let (inj_time, inj_delta, inj_frame) =
-        scalar_block_members(split_version(fragment_source).1);
+    let (inj_time, inj_delta, inj_frame) = scalar_block_members(split_version(fragment_source).1);
     let mut scl_data = [0u8; 16];
     let mut off = 0usize;
     if inj_time {
@@ -389,7 +409,11 @@ pub async fn render_fragment(fragment_source: &str, width: u32, height: u32, tim
 
     // 1×1 黑色贴图 ×4 + 最近采样器（通道未真正采样内容即可保证绑定齐全）
     let black = [[0u8, 0, 0, 255]];
-    let chan_extent = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
+    let chan_extent = wgpu::Extent3d {
+        width: 1,
+        height: 1,
+        depth_or_array_layers: 1,
+    };
     let mut chan_views: Vec<wgpu::TextureView> = Vec::new();
     for i in 0..4u32 {
         let t = device.create_texture_with_data(
@@ -456,8 +480,7 @@ pub async fn render_fragment(fragment_source: &str, width: u32, height: u32, tim
         });
     }
 
-    let extras = scan_extra_uniforms(split_version(fragment_source).1)
-        .unwrap_or_default();
+    let extras = scan_extra_uniforms(split_version(fragment_source).1).unwrap_or_default();
     for (idx, (_, _, is_sampler)) in extras.iter().enumerate() {
         let b = BIND_EXTRA_BASE + idx as u32;
         entries.push(if *is_sampler {
@@ -560,7 +583,10 @@ pub async fn render_fragment(fragment_source: &str, width: u32, height: u32, tim
         .iter()
         .filter(|m| matches!(m.message_type, wgpu::CompilationMessageType::Error))
         .map(|m| match &m.location {
-            Some(loc) => format!("第 {} 行第 {} 列: {}", loc.line_number, loc.line_position, m.message),
+            Some(loc) => format!(
+                "第 {} 行第 {} 列: {}",
+                loc.line_number, loc.line_position, m.message
+            ),
             None => m.message.clone(),
         })
         .collect();
@@ -744,7 +770,8 @@ mod tests {
         assert!(w.contains("mainImage(c, gl_FragCoord.xy)"));
 
         // 用户自声明的成员不再注入，缺失成员照常补齐
-        let own = "uniform float iTime;\nvoid mainImage(out vec4 c, in vec2 fc) { c = vec4(iTime); }";
+        let own =
+            "uniform float iTime;\nvoid mainImage(out vec4 c, in vec2 fc) { c = vec4(iTime); }";
         let w2 = wrap_fragment_wgpu(own).expect("wrap ok");
         assert!(w2.contains("SLScalars"));
         assert!(!w2.contains("float iTime;\n"), "自供的 iTime 不应再次注入");
@@ -762,7 +789,9 @@ mod tests {
         let url = encode_thumbnail(&px, 512, 512).expect("encode ok");
         assert!(url.starts_with("data:image/png;base64,"));
         let (_, payload) = url.split_once(',').unwrap();
-        let decoded = base64::engine::general_purpose::STANDARD.decode(payload).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .unwrap();
         let img = image::load_from_memory(&decoded).unwrap();
         assert_eq!(img.width().max(img.height()), THUMB_MAX_SIDE);
     }

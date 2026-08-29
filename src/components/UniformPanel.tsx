@@ -1,4 +1,5 @@
 import { For, Show, type Component } from 'solid-js';
+import { t } from '../i18n';
 import { BUFFER_LETTER, type SrcPassId } from '../project/types';
 import type { UniformDecl, UniformValue } from '../shadertoy/uniforms';
 
@@ -78,7 +79,7 @@ const UniformPanel: Component<Props> = (props) => {
                 return (
                   <div class="u-row">
                     <div id={labelId} class="u-name" title={`${d.type} · ${d.widget}`}>
-                      {d.name}
+                      {d.displayName ?? d.label ?? d.name}
                     </div>
                     <Show
                       when={d.widget === 'toggle'}
@@ -115,7 +116,7 @@ const UniformPanel: Component<Props> = (props) => {
       </For>
       <Show when={props.groups.length === 0}>
         <div class="menu-info">
-          未发现可调参数。在代码中声明即可：
+          {t('uniform.empty')}
           <code>// @uniform float u_x 0.0 0.0 1.0 0.01</code>
         </div>
       </Show>
@@ -158,7 +159,7 @@ const VecOrScalar: Component<ValueRowProps> = (props) => {
             <label class="u-comp">
               <input
                 type="range"
-                aria-label={`${d.name} ${['X', 'Y', 'Z', 'W'][i]} 滑杆`}
+                aria-label={t('uniform.slider', { name: d.name, axis: ['X', 'Y', 'Z', 'W'][i] })}
                 min={d.min}
                 max={d.max}
                 step={d.step}
@@ -168,7 +169,7 @@ const VecOrScalar: Component<ValueRowProps> = (props) => {
               <input
                 type="number"
                 class="u-num"
-                aria-label={`${d.name} ${['X', 'Y', 'Z', 'W'][i]} 数值`}
+                aria-label={t('uniform.value', { name: d.name, axis: ['X', 'Y', 'Z', 'W'][i] })}
                 min={d.min}
                 max={d.max}
                 step={d.step}
@@ -196,7 +197,7 @@ const VecOrScalar: Component<ValueRowProps> = (props) => {
       <input
         type="number"
         class="u-num"
-        aria-label={`${d.name} 数值`}
+        aria-label={t('uniform.scalarValue', { name: d.name })}
         min={d.min}
         max={d.max}
         step={d.step}

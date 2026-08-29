@@ -49,8 +49,8 @@ mod tests {
 
     #[test]
     fn injection_contains_full_template_for_known_query() {
-        let block = planning_injection("\u{661f}\u{7a7a}\u{7c92}\u{5b50}")
-            .expect("已知模板名必须命中");
+        let block =
+            planning_injection("\u{661f}\u{7a7a}\u{7c92}\u{5b50}").expect("已知模板名必须命中");
         assert!(block.contains("\u{661f}\u{7a7a}\u{7c92}\u{5b50}"));
         assert!(block.contains("void mainImage(out vec4 fragColor, in vec2 fragCoord)"));
         assert!(block.contains("glsl"));

@@ -94,23 +94,24 @@ fn candidate_dirs() -> Vec<PathBuf> {
 
 /// 定位 glslangValidator（结果进程内缓存一次）。
 pub fn locate_glslang() -> Option<&'static PathBuf> {
-    GLSLANG_PATH.get_or_init(|| {
-        let bare = PathBuf::from(binary_name());
-        let mut candidates = candidate_dirs();
-        candidates.push(bare.clone());
-        let found = candidates.iter().find(|c| probe(c));
-        match found {
-            Some(c) => {
-                log::info!("glslangValidator 定位于 {:?}", c);
-                Some(c.clone())
+    GLSLANG_PATH
+        .get_or_init(|| {
+            let bare = PathBuf::from(binary_name());
+            let mut candidates = candidate_dirs();
+            candidates.push(bare.clone());
+            let found = candidates.iter().find(|c| probe(c));
+            match found {
+                Some(c) => {
+                    log::info!("glslangValidator 定位于 {:?}", c);
+                    Some(c.clone())
+                }
+                None => {
+                    log::info!("未检测到 glslangValidator，AI 编译验证将跳过");
+                    None
+                }
             }
-            None => {
-                log::info!("未检测到 glslangValidator，AI 编译验证将跳过");
-                None
-            }
-        }
-    })
-    .as_ref()
+        })
+        .as_ref()
 }
 
 fn write_temp(source: &str, stage: &str) -> Result<PathBuf, String> {
@@ -243,11 +244,13 @@ pub fn parse_errors(text: &str, prelude_lines: u32) -> Vec<CompileError> {
         }
         let segs: Vec<&str> = l.splitn(4, ':').collect();
         let parsed = match segs.as_slice() {
-            [_, file_tok, line_tok, msg] => line_tok.trim().parse::<u32>().ok().map(|raw| CompileError {
-                line: remap(raw, prelude_lines),
-                column: 0,
-                message: format!("[{}] {}", file_tok.trim(), msg.trim()),
-            }),
+            [_, file_tok, line_tok, msg] => {
+                line_tok.trim().parse::<u32>().ok().map(|raw| CompileError {
+                    line: remap(raw, prelude_lines),
+                    column: 0,
+                    message: format!("[{}] {}", file_tok.trim(), msg.trim()),
+                })
+            }
             _ => None,
         };
         out.push(parsed.unwrap_or_else(|| CompileError {
@@ -277,23 +280,32 @@ pub fn parse_warnings(text: &str) -> Vec<String> {
     out
 }
 
-fn run_stage(bin: &Path, wrapped: &WrappedShader, stage: &str) -> Result<(Vec<CompileError>, Vec<String>), String> {
+fn run_stage(
+    bin: &Path,
+    wrapped: &WrappedShader,
+    stage: &str,
+) -> Result<(Vec<CompileError>, Vec<String>), String> {
     let path = write_temp(&wrapped.source, stage)?;
-    let output = Command::new(bin)
-        .arg(&path)
-        .output()
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&path);
-            format!("无法执行 glslangValidator: {e}")
-        })?;
+    let output = Command::new(bin).arg(&path).output().map_err(|e| {
+        let _ = std::fs::remove_file(&path);
+        format!("无法执行 glslangValidator: {e}")
+    })?;
     let _ = std::fs::remove_file(&path);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let diag = if stdout.trim().is_empty() { stderr.to_string() } else { format!("{stdout}\n{stderr}") };
+    let diag = if stdout.trim().is_empty() {
+        stderr.to_string()
+    } else {
+        format!("{stdout}\n{stderr}")
+    };
     let errors = parse_errors(&diag, wrapped.prelude_lines);
     let warnings = parse_warnings(&diag);
     let ok = output.status.success() && errors.is_empty();
-    Ok(if ok { (vec![], warnings) } else { (errors, warnings) })
+    Ok(if ok {
+        (vec![], warnings)
+    } else {
+        (errors, warnings)
+    })
 }
 
 fn wrap_for(stage: &str, source: &str) -> WrappedShader {
@@ -369,14 +381,16 @@ mod tests {
             "用户自己的 iTime 声明应保留，且不额外注入"
         );
         assert!(w.source.contains("uniform vec3 iResolution;")); // 未声明的照常注入
-        // 序言 = 版本行 + 空行 + 7 条注入 uniform（8 核心 − 已声明 iTime）+ slOut + 空行
+                                                                 // 序言 = 版本行 + 空行 + 7 条注入 uniform（8 核心 − 已声明 iTime）+ slOut + 空行
         assert_eq!(w.prelude_lines, 11);
         // 正文 = uniform 行 + mainImage 行
         assert_eq!(w.user_line_count, 2);
         assert!(w.source.contains("mainImage(slOut, gl_FragCoord.xy)"));
 
         let plain = wrap_fragment(USER_SRC);
-        assert!(plain.source.starts_with("#version 330 core\n\nuniform vec3 iResolution;"));
+        assert!(plain
+            .source
+            .starts_with("#version 330 core\n\nuniform vec3 iResolution;"));
     }
 
     #[test]

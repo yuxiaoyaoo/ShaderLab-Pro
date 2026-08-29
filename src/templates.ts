@@ -1,4 +1,8 @@
+import { compileGraph } from './graph/compiler/index';
+import { createDefaultImageGraph } from './graph/editor/defaultGraph';
+import type { GraphDocument } from './graph/model';
 import type { BufferId, ProjectSources } from './project/types';
+import { t, type Locale } from './i18n';
 
 export interface ProjectTemplate {
   id: string;
@@ -7,7 +11,74 @@ export interface ProjectTemplate {
   sources: ProjectSources;
   buffers: { id: BufferId; feedback?: boolean }[];
   sound?: boolean;
+  graph?: { document: GraphDocument; fallback: string };
 }
+
+export type BuiltinTemplateId =
+  | 'graph-gradient'
+  | 'glow'
+  | 'noise'
+  | 'mandelbrot'
+  | 'plasma'
+  | 'raymarch'
+  | 'trishader';
+
+type BuiltinTemplateTextKey = `template.builtin.${BuiltinTemplateId}.${'name' | 'description'}`;
+
+export const BUILTIN_TEMPLATE_KEYS = {
+  'graph-gradient': {
+    name: 'template.builtin.graph-gradient.name',
+    description: 'template.builtin.graph-gradient.description',
+  },
+  glow: {
+    name: 'template.builtin.glow.name',
+    description: 'template.builtin.glow.description',
+  },
+  noise: {
+    name: 'template.builtin.noise.name',
+    description: 'template.builtin.noise.description',
+  },
+  mandelbrot: {
+    name: 'template.builtin.mandelbrot.name',
+    description: 'template.builtin.mandelbrot.description',
+  },
+  plasma: {
+    name: 'template.builtin.plasma.name',
+    description: 'template.builtin.plasma.description',
+  },
+  raymarch: {
+    name: 'template.builtin.raymarch.name',
+    description: 'template.builtin.raymarch.description',
+  },
+  trishader: {
+    name: 'template.builtin.trishader.name',
+    description: 'template.builtin.trishader.description',
+  },
+} as const satisfies Record<BuiltinTemplateId, Record<'name' | 'description', BuiltinTemplateTextKey>>;
+
+const BUILTIN_TEMPLATE_IDS = new Set<string>(Object.keys(BUILTIN_TEMPLATE_KEYS));
+
+export function getBuiltinTemplateDisplay(
+  template: ProjectTemplate,
+  _locale?: Locale,
+): { name: string; description: string } {
+  if (!BUILTIN_TEMPLATE_IDS.has(template.id)) {
+    return { name: template.name, description: template.desc };
+  }
+  const keys = BUILTIN_TEMPLATE_KEYS[template.id as BuiltinTemplateId];
+  return { name: t(keys.name), description: t(keys.description) };
+}
+
+export function getTemplateCanonicalName(template: ProjectTemplate): string {
+  return BUILTIN_TEMPLATE_IDS.has(template.id) ? template.id : template.name;
+}
+
+const STARTER_GRAPH_DOCUMENT = createDefaultImageGraph();
+const STARTER_GRAPH_COMPILE = compileGraph(STARTER_GRAPH_DOCUMENT);
+if (!STARTER_GRAPH_COMPILE.ok || !STARTER_GRAPH_COMPILE.artifact) {
+  throw new Error('内置 Graph 模板编译失败');
+}
+const STARTER_GRAPH_FALLBACK = STARTER_GRAPH_COMPILE.artifact.source;
 
 const GLOW_IMAGE = `void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec2 uv = (2.0 * fragCoord - iResolution.xy) / iResolution.y;
@@ -151,6 +222,14 @@ const TRI_SOUND = `vec2 mainSound(int samp, float time) {
 `;
 
 export const PROJECT_TEMPLATES: ProjectTemplate[] = [
+  {
+    id: 'graph-gradient',
+    name: '节点图动态渐变',
+    desc: 'Graph v1 入门模板：UV、时间、正弦与颜色组合，可直接编辑节点',
+    sources: { image: STARTER_GRAPH_FALLBACK, common: '', bufferA: '', bufferB: '', bufferC: '', bufferD: '', sound: '' },
+    buffers: [],
+    graph: { document: STARTER_GRAPH_DOCUMENT, fallback: STARTER_GRAPH_FALLBACK },
+  },
   {
     id: 'glow',
     name: '光斑流动',

@@ -113,7 +113,12 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         id: "moonshot",
         label: "Kimi（月之暗面）",
         base_url: "https://api.moonshot.cn/v1",
-        models: &["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi-latest"],
+        models: &[
+            "moonshot-v1-8k",
+            "moonshot-v1-32k",
+            "moonshot-v1-128k",
+            "kimi-latest",
+        ],
         local: false,
     },
     ProviderPreset {
@@ -150,7 +155,11 @@ mod preset_tests {
         for p in PROVIDER_PRESETS {
             assert!(!ids.contains(&p.id), "重复的预设 id：{}", p.id);
             ids.insert(p.id);
-            assert!(p.base_url.starts_with("http"), "非法 base_url：{}", p.base_url);
+            assert!(
+                p.base_url.starts_with("http"),
+                "非法 base_url：{}",
+                p.base_url
+            );
             assert_eq!(
                 p.base_url.trim_end_matches('/'),
                 p.base_url,

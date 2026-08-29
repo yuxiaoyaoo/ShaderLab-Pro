@@ -1,4 +1,7 @@
 import { For, Show, createSignal, onMount, type Component } from 'solid-js';
+import { t } from '../i18n';
+import { normalizeProductMessage, type ProductMessageDescriptor } from '../productMessage';
+import ProductMessageView from './ProductMessageView';
 import { useModalFocus } from './modalFocus';
 import {
   fetchAgentConfig,
@@ -24,7 +27,7 @@ const AgentSettingsDialog: Component<Props> = (props) => {
   const [temperature, setTemperature] = createSignal('0.7');
   const [maxTokens, setMaxTokens] = createSignal('4096');
   const [saving, setSaving] = createSignal(false);
-  const [error, setError] = createSignal('');
+  const [error, setError] = createSignal<ProductMessageDescriptor | null>(null);
   let dialogRef: HTMLDivElement | undefined;
   useModalFocus(() => dialogRef);
 
@@ -37,7 +40,7 @@ const AgentSettingsDialog: Component<Props> = (props) => {
         setTemperature(String(v.temperature));
         setMaxTokens(String(v.max_tokens));
       })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+      .catch((error) => setError(normalizeProductMessage(error, 'chat.state-unavailable')));
   });
 
   /** M6d：服务商选中态由 base_url 派生——手动改 URL 会自动回显为对应预设/自定义，无需双向同步 */
@@ -56,7 +59,7 @@ const AgentSettingsDialog: Component<Props> = (props) => {
 
   const save = async () => {
     setSaving(true);
-    setError('');
+    setError(null);
     try {
       const args: Record<string, unknown> = {
         base_url: baseUrl(),
@@ -67,8 +70,8 @@ const AgentSettingsDialog: Component<Props> = (props) => {
       if (apiKey().trim()) args.api_key = apiKey().trim();
       const updated = await saveAgentConfig(args);
       props.onSaved(updated);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setError(normalizeProductMessage(error, 'chat.config-save-failed'));
     } finally {
       setSaving(false);
     }
@@ -89,34 +92,34 @@ const AgentSettingsDialog: Component<Props> = (props) => {
         aria-labelledby="agent-settings-title"
         tabindex="-1"
       >
-        <h3 id="agent-settings-title">AI 服务设置</h3>
+        <h3 id="agent-settings-title">{t('agent.title')}</h3>
         <Show
           when={view()}
-          fallback={<div class="settings-loading" role="status">读取配置中…</div>}
+          fallback={<div class="settings-loading" role="status">{t('agent.loading')}</div>}
         >
           <div class="field-row">
-            <label>服务商</label>
+            <label>{t('agent.provider')}</label>
             <select
               class="text-input grow"
-              aria-label="服务商"
+              aria-label={t('agent.provider')}
               value={activePreset()?.id ?? CUSTOM_ID}
               onChange={(e) => pickProvider(e.currentTarget.value)}
             >
               <For each={view()!.presets}>{(p) => <option value={p.id}>{p.label}</option>}</For>
-              <option value={CUSTOM_ID}>自定义…</option>
+              <option value={CUSTOM_ID}>{t('agent.custom')}</option>
             </select>
           </div>
           <div class="field-row">
-            <label>API Key</label>
+            <label>{t('agent.apiKey')}</label>
             <input
               type="password"
               class="text-input grow"
-              aria-label="API Key"
+              aria-label={t('agent.apiKey')}
               placeholder={
                 view()!.api_key_hint
-                  ? `已保存 ${view()!.api_key_hint}（留空保持不变）`
+                  ? t('agent.savedKey', { hint: view()!.api_key_hint ?? '' })
                   : activePreset()?.local
-                    ? '本地服务可填任意字符，如 ollama'
+                    ? t('agent.localKey')
                     : 'sk-...'
               }
               value={apiKey()}
@@ -125,29 +128,29 @@ const AgentSettingsDialog: Component<Props> = (props) => {
           </div>
           <Show when={activePreset()?.local}>
             <div class="field-hint">
-              本地服务无需真实 Key，任意占位符即可通过校验；确认本地服务已启动并开放对应端口。
+              {t('agent.localHint')}
             </div>
           </Show>
           <div class="field-row">
-            <label>Base URL</label>
+            <label>{t('agent.baseUrl')}</label>
             <input
               type="text"
               class="text-input grow"
-              aria-label="Base URL"
+              aria-label={t('agent.baseUrl')}
               placeholder="https://api.openai.com/v1"
               value={baseUrl()}
               onInput={(e) => setBaseUrl(e.currentTarget.value)}
             />
           </div>
           <div class="field-hint">
-            兼容 OpenAI Chat Completions 协议的服务均可；切换服务商后手动改 URL 将自动转为自定义。
+            {t('agent.baseUrlHint')}
           </div>
           <div class="field-row">
-            <label>模型</label>
+            <label>{t('agent.model')}</label>
             <input
               type="text"
               class="text-input grow"
-              aria-label="模型"
+              aria-label={t('agent.model')}
               list="provider-model-suggestions"
               placeholder="gpt-4o-mini"
               value={model()}
@@ -159,13 +162,13 @@ const AgentSettingsDialog: Component<Props> = (props) => {
               </For>
             </datalist>
           </div>
-          <div class="field-hint">可在推荐列表中选择，或直接输入服务端支持的任意模型名。</div>
+          <div class="field-hint">{t('agent.modelHint')}</div>
           <div class="field-row">
-            <label>Temperature</label>
+            <label>{t('agent.temperature')}</label>
             <input
               type="number"
               class="text-input"
-              aria-label="Temperature"
+              aria-label={t('agent.temperature')}
               min="0"
               max="2"
               step="0.1"
@@ -174,11 +177,11 @@ const AgentSettingsDialog: Component<Props> = (props) => {
             />
           </div>
           <div class="field-row">
-            <label>Max Tokens</label>
+            <label>{t('agent.maxTokens')}</label>
             <input
               type="number"
               class="text-input"
-              aria-label="Max Tokens"
+              aria-label={t('agent.maxTokens')}
               min="256"
               max="32768"
               step="256"
@@ -187,21 +190,23 @@ const AgentSettingsDialog: Component<Props> = (props) => {
             />
           </div>
           <Show when={view()!.configured}>
-            <div class="settings-status ok" role="status">✓ 服务已配置可用</div>
+            <div class="settings-status ok" role="status">{t('agent.configured')}</div>
           </Show>
           <Show when={!view()!.configured}>
-            <div class="settings-status" role="status">尚未配置 API Key，AI 功能暂不可用</div>
+            <div class="settings-status" role="status">{t('agent.unconfigured')}</div>
           </Show>
         </Show>
         <Show when={error()}>
-          <div class="settings-status err" role="alert">{error()}</div>
+          {(descriptor) => (
+            <ProductMessageView class="settings-status err" value={descriptor()} compact role="alert" />
+          )}
         </Show>
         <div class="modal-actions">
           <button class="btn" onClick={() => props.onClose()}>
-            取消
+            {t('common.cancel')}
           </button>
           <button class="btn primary" disabled={saving()} onClick={() => void save()}>
-            {saving() ? '保存中…' : '保存并生效'}
+            {saving() ? t('common.saving') : t('agent.save')}
           </button>
         </div>
       </div>

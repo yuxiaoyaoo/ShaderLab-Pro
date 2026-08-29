@@ -9,8 +9,8 @@ pub mod tools;
 pub use agent::ShaderAgent;
 pub use context::{SessionContext, ValidationStatus};
 pub use extractor::{
-    ErrorFeedback, Intent, ShaderDoc, ShaderResponse, TemplateSuggestion, extract_shader_response,
+    extract_shader_response, ErrorFeedback, Intent, ShaderDoc, ShaderResponse, TemplateSuggestion,
 };
 pub use phase::Phase;
-pub use pipeline::{MAX_FIX_ATTEMPTS, TurnOutput, ValidationView};
-pub use tools::{CompileReport, validate_shader};
+pub use pipeline::{TurnOutput, ValidationView, MAX_FIX_ATTEMPTS};
+pub use tools::{validate_shader, CompileReport};

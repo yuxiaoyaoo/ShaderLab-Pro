@@ -1,15 +1,14 @@
-use crate::agent::{
-    Intent, Phase, ShaderAgent, SessionContext, ValidationStatus,
-};
+use crate::agent::extractor::{ProductNotice, ProductParam, ShaderCode};
 use crate::agent::pipeline::{self, ValidationView};
-use crate::agent::extractor::ShaderCode;
+use crate::agent::{Intent, Phase, SessionContext, ShaderAgent, ValidationStatus};
 use crate::config::{AgentConfig, AgentConfigView, PROVIDER_PRESETS};
 use crate::templates::{
     delete_user_entry, list_user_entries, save_user_entry, TemplateEntry, TemplateRegistry,
-    UserTemplateRecord, USER_CATEGORY,
+    UserTemplateError, UserTemplateRecord, USER_CATEGORY,
 };
 use rig_core::message::Message;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Emitter, Manager};
@@ -61,8 +60,86 @@ impl Default for Session {
 }
 
 #[derive(Debug, Serialize)]
+pub struct IpcError {
+    pub code: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, ProductParam>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_detail: Option<String>,
+}
+
+impl IpcError {
+    fn new(code: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            params: BTreeMap::new(),
+            raw_detail: None,
+        }
+    }
+
+    fn raw(code: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            params: BTreeMap::new(),
+            raw_detail: Some(detail.into()),
+        }
+    }
+
+    fn with_param(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<ProductParam>,
+    ) -> Self {
+        self.params.insert(name.into(), value.into());
+        self
+    }
+}
+
+impl From<UserTemplateError> for IpcError {
+    fn from(error: UserTemplateError) -> Self {
+        match error {
+            UserTemplateError::NameEmpty => IpcError::new("chat.template-name-empty"),
+            UserTemplateError::NameTooLong { max } => {
+                IpcError::new("chat.template-name-too-long").with_param("max", max)
+            }
+            UserTemplateError::CodeEmpty => IpcError::new("chat.template-code-empty"),
+            UserTemplateError::CodeTooLarge { max_kb } => {
+                IpcError::new("chat.template-code-too-large").with_param("maxKb", max_kb)
+            }
+            UserTemplateError::EntryMissing { signature } => {
+                IpcError::new("chat.template-entry-missing").with_param("signature", signature)
+            }
+            UserTemplateError::UniformDeclared => {
+                IpcError::new("chat.template-uniform-declared")
+            }
+            UserTemplateError::DirectoryCreate(detail) => {
+                IpcError::raw("chat.template-dir-create-failed", detail)
+            }
+            UserTemplateError::NameInvalid => IpcError::new("chat.template-name-invalid"),
+            UserTemplateError::NameCollision => {
+                IpcError::new("chat.template-name-collision")
+            }
+            UserTemplateError::Serialize(detail) => {
+                IpcError::raw("chat.template-serialize-failed", detail)
+            }
+            UserTemplateError::Write(detail) => {
+                IpcError::raw("chat.template-write-failed", detail)
+            }
+            UserTemplateError::SlugInvalid { slug } => {
+                IpcError::new("chat.template-slug-invalid").with_param("slug", slug)
+            }
+            UserTemplateError::NotFound => IpcError::new("chat.template-delete-not-found"),
+            UserTemplateError::Delete(detail) => {
+                IpcError::raw("chat.template-delete-file-failed", detail)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
 pub struct ChatResponse {
     pub text: String,
+    pub notices: Vec<ProductNotice>,
     pub phase_id: String,
     pub phase: String,
     pub intent: String,
@@ -94,6 +171,7 @@ pub struct PhaseView {
 #[derive(Debug, Serialize)]
 pub struct TemplateAdoptResponse {
     pub text: String,
+    pub notices: Vec<ProductNotice>,
     pub template_name: String,
     pub category: String,
     pub phase_id: String,
@@ -118,10 +196,10 @@ pub struct SetAgentConfigArgs {
     pub max_tokens: Option<u32>,
 }
 
-fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, IpcError> {
     app.path()
         .app_data_dir()
-        .map_err(|e| format!("无法定位应用数据目录: {}", e))
+        .map_err(|error| IpcError::raw("chat.data-dir-failed", error.to_string()))
 }
 
 pub fn init_from_disk(state: &AppState, dir: &Path) {
@@ -141,13 +219,19 @@ pub fn init_from_disk(state: &AppState, dir: &Path) {
     }
 }
 
-fn rebuild_agent(state: &AppState, cfg: &AgentConfig) -> Result<(), String> {
-    if cfg.is_configured() {
-        let agent = ShaderAgent::new(cfg)?;
-        *state.agent.write().unwrap() = Some(Arc::new(agent));
+fn rebuild_agent(state: &AppState, cfg: &AgentConfig) -> Result<(), IpcError> {
+    let next = if cfg.is_configured() {
+        Some(Arc::new(
+            ShaderAgent::new(cfg)
+                .map_err(|detail| IpcError::raw("chat.agent-init-failed", detail))?,
+        ))
     } else {
-        *state.agent.write().unwrap() = None;
-    }
+        None
+    };
+    *state
+        .agent
+        .write()
+        .map_err(|error| IpcError::raw("chat.state-unavailable", error.to_string()))? = next;
     Ok(())
 }
 
@@ -189,7 +273,7 @@ pub async fn chat(
     message: String,
     state: tauri::State<'_, AppState>,
     app: AppHandle,
-) -> Result<ChatResponse, String> {
+) -> Result<ChatResponse, IpcError> {
     execute_chat_turn(message, &state, &app, None).await
 }
 
@@ -202,7 +286,7 @@ pub async fn chat_stream(
     on_event: tauri::ipc::Channel<ChatStreamEvent>,
     state: tauri::State<'_, AppState>,
     app: AppHandle,
-) -> Result<ChatResponse, String> {
+) -> Result<ChatResponse, IpcError> {
     execute_chat_turn(message, &state, &app, Some(on_event)).await
 }
 
@@ -211,24 +295,27 @@ async fn execute_chat_turn(
     state: &tauri::State<'_, AppState>,
     app: &AppHandle,
     stream_channel: Option<tauri::ipc::Channel<ChatStreamEvent>>,
-) -> Result<ChatResponse, String> {
+) -> Result<ChatResponse, IpcError> {
     let message = message.trim().to_string();
     if message.is_empty() {
-        return Err("消息不能为空".to_string());
+        return Err(IpcError::new("chat.message-empty"));
     }
 
     let agent = state
         .agent
         .read()
-        .unwrap()
+        .map_err(|error| IpcError::raw("chat.state-unavailable", error.to_string()))?
         .clone();
     let agent = match agent {
-        Some(a) => a,
-        None => return Err("尚未配置 AI 服务，请先在设置中填写 API Key 与模型".to_string()),
+        Some(agent) => agent,
+        None => return Err(IpcError::new("chat.ai-not-configured")),
     };
 
     let (current_phase, context_snapshot, history_snapshot) = {
-        let session = state.session.lock().unwrap();
+        let session = state
+            .session
+            .lock()
+            .map_err(|error| IpcError::raw("chat.state-unavailable", error.to_string()))?;
         (
             session.phase,
             session.context.clone(),
@@ -257,7 +344,8 @@ async fn execute_chat_turn(
     let pipeline::TurnOutput {
         mut response,
         parse_ok,
-        mut reply_display,
+        reply_display,
+        mut notices,
         final_phase,
         validation,
         final_code,
@@ -270,7 +358,8 @@ async fn execute_chat_turn(
         &validator,
         &renderer,
     )
-    .await?;
+    .await
+    .map_err(|detail| IpcError::raw("chat.request-failed", detail))?;
 
     // M5：文档轮输出为结构化 JSON，不宜逐字直播——先摘除观察者再衔接。
     drop(_observer_guard);
@@ -284,15 +373,15 @@ async fn execute_chat_turn(
     {
         // Complete 路径 response.code 为 None，回退到会话已提交的当前代码。
         // 锁不可跨 await：先克隆再释放守卫。
-        let doc_source: Option<ShaderCode> = final_code.clone().or_else(|| {
-            state
-                .session
-                .lock()
-                .unwrap()
-                .context
-                .current_code
-                .clone()
-        });
+        let doc_source: Option<ShaderCode> = match final_code.clone() {
+            Some(code) => Some(code),
+            None => {
+                let session = state.session.lock().map_err(|error| {
+                    IpcError::raw("chat.state-unavailable", error.to_string())
+                })?;
+                session.context.current_code.clone()
+            }
+        };
         match doc_source {
             Some(code) => {
                 match pipeline::document_turn(
@@ -310,8 +399,7 @@ async fn execute_chat_turn(
                             doc.parameters.len()
                         );
                         response.documentation = Some(doc);
-                        reply_display
-                            .push_str("\n\n📄 已自动生成算法说明与参数文档（见下方折叠面板）。");
+                        notices.push(ProductNotice::new("chat.notice.auto-documentation"));
                     }
                     Ok(None) => log::warn!("自动文档轮未产出有效文档，已降级跳过"),
                     Err(e) => log::warn!("自动文档轮失败（不阻断主流程）：{e}"),
@@ -327,8 +415,14 @@ async fn execute_chat_turn(
         .map(|c| serde_json::json!({ "fragment": c.fragment, "vertex": c.vertex }));
 
     {
-        let mut session = state.session.lock().unwrap();
-        session.context.confirmed_requirements.get_or_insert_with(|| message.clone());
+        let mut session = state
+            .session
+            .lock()
+            .map_err(|error| IpcError::raw("chat.state-unavailable", error.to_string()))?;
+        session
+            .context
+            .confirmed_requirements
+            .get_or_insert_with(|| message.clone());
         if matches!(response.intent, Intent::Generate) && final_code.is_some() {
             session.context.current_code = final_code.clone();
             if validation.is_none() {
@@ -349,9 +443,7 @@ async fn execute_chat_turn(
                             reason: fb.message.clone(),
                         }
                     } else {
-                        ValidationStatus::CompileFailed {
-                            errors: vec![],
-                        }
+                        ValidationStatus::CompileFailed { errors: vec![] }
                     };
                 }
                 if matches!(response.intent, Intent::Complete) {
@@ -380,6 +472,7 @@ async fn execute_chat_turn(
 
     Ok(ChatResponse {
         text: reply_display,
+        notices,
         phase_id: final_phase.id().to_string(),
         phase: final_phase.name().to_string(),
         intent: response.intent.id().to_string(),
@@ -402,26 +495,27 @@ pub async fn select_template(
     name: String,
     state: tauri::State<'_, AppState>,
     app: AppHandle,
-) -> Result<TemplateAdoptResponse, String> {
+) -> Result<TemplateAdoptResponse, IpcError> {
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err("模板名称不能为空".to_string());
+        return Err(IpcError::new("chat.template-name-empty"));
     }
     let dir = data_dir(&app)?;
     let user_pool = list_user_entries(&dir);
     let entry = TemplateRegistry::global()
         .resolve_with_user(&name, &user_pool)
-        .ok_or_else(|| format!("模板库中未找到「{}」", name.trim()))?;
+        .ok_or_else(|| {
+            IpcError::new("chat.template-not-found").with_param("name", name.as_str())
+        })?;
 
     let adopted = entry.name.clone();
     let category = entry.category.clone();
-    let origin = if category == USER_CATEGORY { "自定义" } else { "内置" };
-    let reply = format!(
-        "已为你采用{origin}模板「{adopted}」（分类：{category}），完整代码已推送到编辑器。你可以：\
-         \n1. 在预览面板直接查看效果；\
-         \n2. 用自然语言描述调整需求（改配色、调速、加交互等）；\
-         \n3. 说“完成”进入测试与文档阶段。"
-    );
+    let notice_code = if category == USER_CATEGORY {
+        "chat.notice.template-adopted-user"
+    } else {
+        "chat.notice.template-adopted-builtin"
+    };
+    let notices = vec![ProductNotice::new(notice_code).with_param("name", adopted.as_str())];
 
     let code = ShaderCode {
         fragment: entry.code.clone(),
@@ -434,12 +528,15 @@ pub async fn select_template(
     let fragment_for_response = code.fragment.clone();
 
     {
-        let mut session = state.session.lock().unwrap();
+        let mut session = state
+            .session
+            .lock()
+            .map_err(|error| IpcError::raw("chat.state-unavailable", error.to_string()))?;
         session.context.selected_template = Some(adopted.clone());
         session
             .context
             .confirmed_requirements
-            .get_or_insert_with(|| format!("采用内置模板「{}」", adopted));
+            .get_or_insert_with(|| format!("采用模板「{}」", adopted));
         session.context.current_code = Some(code);
         session.context.validation_status = ValidationStatus::NotStarted;
         session.phase = Phase::Coding;
@@ -449,14 +546,15 @@ pub async fn select_template(
         });
         session.history.push(ChatMessage {
             role: "assistant".to_string(),
-            text: reply.clone(),
+            text: String::new(),
         });
     }
 
     let _ = app.emit("shader-updated", code_payload);
 
     Ok(TemplateAdoptResponse {
-        text: reply,
+        text: String::new(),
+        notices,
         template_name: adopted,
         category,
         phase_id: Phase::Coding.id().to_string(),
@@ -514,19 +612,19 @@ pub struct SaveUserTemplateArgs {
 pub async fn save_user_template(
     args: SaveUserTemplateArgs,
     app: AppHandle,
-) -> Result<UserTemplateView, String> {
+) -> Result<UserTemplateView, IpcError> {
     if args.name.trim().is_empty() {
-        return Err("模板名称不能为空".to_string());
+        return Err(IpcError::new("chat.template-name-empty"));
     }
     let report = crate::agent::tools::compile_glsl::validate_shader(&args.code, None);
     if !report.errors.is_empty() {
         let detail = report
             .errors
             .iter()
-            .map(|e| format!("第 {} 行 第 {} 列：{}", e.line, e.column, e.message))
+            .map(|error| format!("{}:{}: {}", error.line, error.column, error.message))
             .collect::<Vec<_>>()
             .join("\n");
-        return Err(format!("编译预检未通过：\n{}", detail));
+        return Err(IpcError::raw("chat.template-preflight-failed", detail));
     }
     let dir = data_dir(&app)?;
     let entry = save_user_entry(
@@ -539,14 +637,17 @@ pub async fn save_user_template(
             uniforms: args.uniforms,
             code: args.code,
         },
-    )?;
+    )
+    .map_err(IpcError::from)?;
     let _ = app.emit("user-templates-changed", ());
     Ok(UserTemplateView::from_entry(entry))
 }
 
 /// 列出全部用户模板（每次直读盘，无缓存）
 #[tauri::command]
-pub async fn list_user_templates(app: AppHandle) -> Result<Vec<UserTemplateView>, String> {
+pub async fn list_user_templates(
+    app: AppHandle,
+) -> Result<Vec<UserTemplateView>, IpcError> {
     let dir = data_dir(&app)?;
     Ok(list_user_entries(&dir)
         .into_iter()
@@ -556,16 +657,19 @@ pub async fn list_user_templates(app: AppHandle) -> Result<Vec<UserTemplateView>
 
 /// 删除指定 slug 的用户模板
 #[tauri::command]
-pub async fn delete_user_template(slug: String, app: AppHandle) -> Result<(), String> {
+pub async fn delete_user_template(slug: String, app: AppHandle) -> Result<(), IpcError> {
     let dir = data_dir(&app)?;
-    delete_user_entry(&dir, &slug)?;
+    delete_user_entry(&dir, &slug).map_err(IpcError::from)?;
     let _ = app.emit("user-templates-changed", ());
     Ok(())
 }
 
 #[tauri::command]
-pub async fn get_phase(state: tauri::State<'_, AppState>) -> Result<PhaseView, String> {
-    let session = state.session.lock().unwrap();
+pub async fn get_phase(state: tauri::State<'_, AppState>) -> Result<PhaseView, IpcError> {
+    let session = state
+        .session
+        .lock()
+        .map_err(|error| IpcError::raw("chat.state-unavailable", error.to_string()))?;
     Ok(PhaseView {
         id: session.phase.id().to_string(),
         name: session.phase.name().to_string(),
@@ -573,8 +677,11 @@ pub async fn get_phase(state: tauri::State<'_, AppState>) -> Result<PhaseView, S
 }
 
 #[tauri::command]
-pub async fn reset_session(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let mut session = state.session.lock().unwrap();
+pub async fn reset_session(state: tauri::State<'_, AppState>) -> Result<(), IpcError> {
+    let mut session = state
+        .session
+        .lock()
+        .map_err(|error| IpcError::raw("chat.state-unavailable", error.to_string()))?;
     *session = Session::new();
     Ok(())
 }
@@ -582,8 +689,12 @@ pub async fn reset_session(state: tauri::State<'_, AppState>) -> Result<(), Stri
 #[tauri::command]
 pub async fn get_agent_config(
     state: tauri::State<'_, AppState>,
-) -> Result<AgentConfigView, String> {
-    let cfg = state.config.lock().unwrap().clone();
+) -> Result<AgentConfigView, IpcError> {
+    let cfg = state
+        .config
+        .lock()
+        .map_err(|error| IpcError::raw("chat.state-unavailable", error.to_string()))?
+        .clone();
     Ok(config_view(&cfg))
 }
 
@@ -592,29 +703,33 @@ pub async fn set_agent_config(
     args: SetAgentConfigArgs,
     state: tauri::State<'_, AppState>,
     app: AppHandle,
-) -> Result<AgentConfigView, String> {
+) -> Result<AgentConfigView, IpcError> {
     let dir = data_dir(&app)?;
     let merged = {
-        let mut cfg = state.config.lock().unwrap();
-        if let Some(v) = args.api_key {
-            cfg.api_key = v.trim().to_string();
+        let mut cfg = state
+            .config
+            .lock()
+            .map_err(|error| IpcError::raw("chat.state-unavailable", error.to_string()))?;
+        if let Some(value) = args.api_key {
+            cfg.api_key = value.trim().to_string();
         }
-        if let Some(v) = args.base_url {
-            let v = v.trim().to_string();
-            if !v.is_empty() {
-                cfg.base_url = v;
+        if let Some(value) = args.base_url {
+            let value = value.trim().to_string();
+            if !value.is_empty() {
+                cfg.base_url = value;
             }
         }
-        if let Some(v) = args.model {
-            cfg.model = v.trim().to_string();
+        if let Some(value) = args.model {
+            cfg.model = value.trim().to_string();
         }
-        if let Some(v) = args.temperature {
-            cfg.temperature = v.clamp(0.0, 2.0);
+        if let Some(value) = args.temperature {
+            cfg.temperature = value.clamp(0.0, 2.0);
         }
-        if let Some(v) = args.max_tokens {
-            cfg.max_tokens = v.clamp(64, 32768);
+        if let Some(value) = args.max_tokens {
+            cfg.max_tokens = value.clamp(64, 32768);
         }
-        cfg.save(&dir)?;
+        cfg.save(&dir)
+            .map_err(|detail| IpcError::raw("chat.config-save-failed", detail))?;
         cfg.clone()
     };
     rebuild_agent(&state, &merged)?;

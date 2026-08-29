@@ -1,3 +1,4 @@
+import { ProductError } from '../productMessage';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import type { AudioPCM, RuntimeApi } from '../shadertoy/runtime';
 
@@ -112,7 +113,7 @@ export async function exportMp4(
   const height = Math.max(2, Math.floor(opts.height));
 
   const codec = await pickH264Codec(width, height, fps, opts.bitrate);
-  if (!codec) throw new Error('当前环境不支持 H.264 硬编码（WebCodecs 不可用）');
+  if (!codec) throw new ProductError({ code: 'export.h264-unsupported' });
 
   const pcm = opts.hasAudio ? opts.audio : null;
   const aacCfg = pcm ? await pickAacConfig(pcm.sampleRate) : null;
@@ -165,7 +166,7 @@ export async function exportMp4(
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('无法创建 2D 画布（MP4 编码用）');
+  if (!ctx) throw new ProductError({ code: 'export.canvas-unavailable', params: { format: 'MP4' } });
 
   const dt = 1 / fps;
   const baseFrame = Math.max(0, Math.round(opts.start * fps));
@@ -182,12 +183,15 @@ export async function exportMp4(
       dt,
       { width, height },
     );
-    if (!blob) throw new Error(`第 ${i + 1} 帧捕获失败`);
+    if (!blob) throw new ProductError({ code: 'export.frame-capture-failed', params: { frame: i + 1 } });
     const bmp = await createImageBitmap(blob);
     if (bmp.width !== width || bmp.height !== height) {
       const actualSize = `${bmp.width}×${bmp.height}`;
       bmp.close();
-      throw new Error(`第 ${i + 1} 帧尺寸不匹配：捕获为 ${actualSize}，期望 ${width}×${height}`);
+      throw new ProductError({
+        code: 'export.frame-size-mismatch',
+        params: { frame: i + 1, actual: actualSize, expected: `${width}×${height}` },
+      });
     }
     try {
       ctx.drawImage(bmp, 0, 0);
@@ -207,8 +211,11 @@ export async function exportMp4(
     await wait(0);
   }
 
-  if (encodeError) throw encodeError;
-  if (written === 0) throw new Error('未编码任何帧（可能已被取消）');
+  if (encodeError) throw new ProductError({
+    code: 'export.video-encode-failed',
+    rawDetail: (encodeError as Error).message,
+  });
+  if (written === 0) throw new ProductError({ code: 'export.no-frames' });
 
   await videoEncoder.flush();
   videoEncoder.close();

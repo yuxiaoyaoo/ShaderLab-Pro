@@ -10,10 +10,11 @@
 
 use super::context::{CompileError, SessionContext, ValidationStatus};
 use super::extractor::{
-    ErrorFeedback, Intent, ShaderCode, ShaderDoc, ShaderResponse, extract_shader_response,
+    extract_shader_response, ErrorFeedback, Intent, ProductNotice, ShaderCode, ShaderDoc,
+    ShaderResponse,
 };
 use super::phase::Phase;
-use super::tools::{CompileReport, RenderReport, validate_shader};
+use super::tools::{validate_shader, CompileReport, RenderReport};
 use super::ShaderAgent;
 use rig_core::message::Message;
 use serde::Serialize;
@@ -52,6 +53,7 @@ pub struct TurnOutput {
     pub response: ShaderResponse,
     pub parse_ok: bool,
     pub reply_display: String,
+    pub notices: Vec<ProductNotice>,
     pub final_phase: Phase,
     pub validation: Option<ValidationView>,
     /// 最终生效的代码（修复循环可能多次改写）
@@ -89,13 +91,8 @@ pub fn default_renderer() -> RendererFn {
         // async move 将源码所有权移入 Future 自身状态，
         // 避免返回的 Future 借用闭包栈上局部变量（E0597）。
         Box::pin(async move {
-            super::tools::render_fragment(
-                &fragment,
-                DEFAULT_RENDER_SIZE,
-                DEFAULT_RENDER_SIZE,
-                0.0,
-            )
-            .await
+            super::tools::render_fragment(&fragment, DEFAULT_RENDER_SIZE, DEFAULT_RENDER_SIZE, 0.0)
+                .await
         }) as RendererFuture
     })
 }
@@ -145,7 +142,8 @@ where
         .send_turn(start_phase, &effective_message, context_snapshot, history)
         .await?;
     let (mut response, mut parse_ok) = extract_shader_response(&raw_reply);
-    let mut reply_display = response.display_text();
+    let reply_display = response.display_text();
+    let mut notices = response.product_notices();
 
     // —— 非「生成代码」路径：完全保持 M0 状态机语义 ——
     if !matches!(response.intent, Intent::Generate) || response.code.is_none() {
@@ -155,6 +153,7 @@ where
             response,
             parse_ok,
             reply_display,
+            notices,
             final_phase: next,
             validation: None,
         });
@@ -287,34 +286,21 @@ where
     } else if !report.success {
         // 重试预算耗尽仍失败（或渲染修复引发编译回归）→ 回到 Coding
         if response.error_feedback.is_none() {
-            let message = report
-                .errors
-                .first()
-                .map(|e| e.message.clone())
-                .unwrap_or_else(|| "编译失败".to_string());
-            let suggestion = match &unfixable_reason {
-                Some(r) => format!("AI 无法自行修复：{r}。建议换一种实现思路、简化效果，或点击 ⟲ 新会话重新描述需求。"),
-                None => "已重试 3 次仍未通过。建议换一种实现思路、减少复杂度，或点击 ⟲ 新会话重新描述需求。".to_string(),
-            };
-            response.error_feedback = Some(ErrorFeedback {
-                phase: "compile".to_string(),
-                message,
-                line: first_error_line(&report),
-                suggestion,
-            });
+            if let Some(error) = report.errors.first() {
+                response.error_feedback = Some(ErrorFeedback {
+                    phase: "compile".to_string(),
+                    message: error.message.clone(),
+                    line: first_error_line(&report),
+                    suggestion: unfixable_reason.clone().unwrap_or_default(),
+                });
+            }
         }
         ValidationView {
             status: "failed".to_string(),
             errors: report.errors.clone(),
             warnings: vec![],
             fix_attempts: attempts + render_attempts,
-            note: Some(
-                if render_attempts > 0 {
-                    format!("渲染修复引入编译回归（本轮修复 {render_attempts} 次）")
-                } else {
-                    format!("已自动尝试修复 {attempts}/{MAX_FIX_ATTEMPTS} 次")
-                },
-            ),
+            note: None,
             render,
         }
     } else {
@@ -322,27 +308,30 @@ where
         let rr = render.expect("编译通过时渲染报告必已生成");
         if let Some(reason) = &rr.unavailable_reason {
             // 优雅降级：无 GPU 时保留编译结论，前端弱化渲染展示
-            reply_display.push_str("\n\nℹ️ 本机未检测到可用 GPU，已跳过渲染预览，仅完成静态编译验证。");
+            notices.push(
+                ProductNotice::new("chat.notice.compile-passed")
+                    .with_param("warnings", report.warnings.len()),
+            );
+            notices.push(ProductNotice::new("chat.notice.render-skipped"));
             ValidationView {
                 status: "passed".to_string(),
                 errors: vec![],
                 warnings: report.warnings.clone(),
                 fix_attempts: attempts,
-                note: Some(format!("渲染预览不可用：{reason}")),
+                note: Some(reason.clone()),
                 render: Some(rr),
             }
         // 黑帧即使 success 也属于缺陷；预算耗尽仍黑 → 走下方失败分支
         } else if rr.success && !rr.is_black_frame {
-            reply_display.push_str("\n\n✅ glslang 编译验证通过");
-            if !report.warnings.is_empty() {
-                reply_display.push_str(&format!("（{} 个警告）", report.warnings.len()));
-            }
-            reply_display.push_str("，已进入文档阶段——可以说“解释一下算法”或直接提出新需求。");
-            reply_display.push_str(&format!(
-                "\n🖼️ 首帧渲染验证通过——亮度 {:.2}、覆盖率 {:.0}%，预览图已随消息返回",
-                rr.avg_brightness,
-                rr.coverage * 100.0
-            ));
+            notices.push(
+                ProductNotice::new("chat.notice.compile-passed")
+                    .with_param("warnings", report.warnings.len()),
+            );
+            notices.push(
+                ProductNotice::new("chat.notice.render-passed")
+                    .with_param("brightness", rr.avg_brightness)
+                    .with_param("coverage", rr.coverage * 100.0),
+            );
             ValidationView {
                 status: "passed".to_string(),
                 errors: vec![],
@@ -355,24 +344,19 @@ where
         } else {
             // 渲染端问题未被修复 → 整体判失败，phase=render 反馈给前端红块
             if response.error_feedback.is_none() {
-                let message = rr.errors.first().cloned().unwrap_or_else(|| {
-                    if rr.is_black_frame {
-                        "输出为全黑帧".to_string()
-                    } else {
-                        "渲染验证未通过".to_string()
-                    }
-                });
-                let suggestion = match &render_unfixable {
-                    Some(r) => format!("AI 无法自行修复渲染问题：{r}。建议换一种实现思路、简化效果，或点击 ⟲ 新会话重新描述需求。"),
-                    None => format!("渲染问题已重试 {render_attempts}/{MAX_FIX_ATTEMPTS} 次仍未解决。建议检查时间依赖初值与坐标计算，或点击 ⟲ 新会话重新描述需求。"),
-                };
-                response.error_feedback = Some(ErrorFeedback {
-                    phase: "render".to_string(),
-                    message,
-                    line: render_fail_line(&rr.errors),
-                    suggestion,
-                });
+                if let Some(message) = rr.errors.first() {
+                    response.error_feedback = Some(ErrorFeedback {
+                        phase: "render".to_string(),
+                        message: message.clone(),
+                        line: render_fail_line(&rr.errors),
+                        suggestion: render_unfixable.clone().unwrap_or_default(),
+                    });
+                }
             }
+            notices.push(
+                ProductNotice::new("chat.notice.render-failed")
+                    .with_param("attempts", render_attempts),
+            );
             let errors: Vec<CompileError> = rr
                 .errors
                 .iter()
@@ -387,9 +371,7 @@ where
                 errors,
                 warnings: vec![],
                 fix_attempts: attempts + render_attempts,
-                note: Some(format!(
-                    "渲染验证未通过（已重试 {render_attempts}/{MAX_FIX_ATTEMPTS} 次）"
-                )),
+                note: None,
                 render: Some(rr),
             }
         }
@@ -406,12 +388,26 @@ where
         vertex: current_vertex,
         ..first_code
     });
+    if let Some(notice) = notices
+        .iter_mut()
+        .find(|notice| notice.code == "chat.notice.code-generated")
+    {
+        *notice = ProductNotice::new("chat.notice.code-generated").with_param(
+            "lines",
+            response
+                .code
+                .as_ref()
+                .map(|code| code.fragment.lines().count())
+                .unwrap_or(0),
+        );
+    }
 
     Ok(TurnOutput {
         final_code: response.code.clone(),
         response,
         parse_ok,
         reply_display,
+        notices,
         final_phase,
         validation: Some(validation),
     })

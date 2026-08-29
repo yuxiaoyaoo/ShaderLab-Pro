@@ -1,3 +1,4 @@
+import { ProductError } from '../productMessage';
 import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 import type { RuntimeApi } from '../shadertoy/runtime';
 
@@ -42,7 +43,7 @@ export async function exportGif(
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('无法创建 2D 画布（GIF 编码用）');
+  if (!ctx) throw new ProductError({ code: 'export.canvas-unavailable', params: { format: 'GIF' } });
 
   const gif = GIFEncoder();
   const dt = 1 / fps;
@@ -57,12 +58,15 @@ export async function exportGif(
       dt,
       { width, height },
     );
-    if (!blob) throw new Error(`第 ${i + 1} 帧捕获失败`);
+    if (!blob) throw new ProductError({ code: 'export.frame-capture-failed', params: { frame: i + 1 } });
     const bmp = await createImageBitmap(blob);
     if (bmp.width !== width || bmp.height !== height) {
       const actualSize = `${bmp.width}×${bmp.height}`;
       bmp.close();
-      throw new Error(`第 ${i + 1} 帧尺寸不匹配：捕获为 ${actualSize}，期望 ${width}×${height}`);
+      throw new ProductError({
+        code: 'export.frame-size-mismatch',
+        params: { frame: i + 1, actual: actualSize, expected: `${width}×${height}` },
+      });
     }
     try {
       ctx.drawImage(bmp, 0, 0);
@@ -78,7 +82,7 @@ export async function exportGif(
     await new Promise((r) => setTimeout(r, 0));
   }
 
-  if (written === 0) throw new Error('未写入任何帧（可能已被取消）');
+  if (written === 0) throw new ProductError({ code: 'export.no-frames' });
   gif.finish();
   return {
     blob: new Blob([gif.bytes() as BlobPart], { type: 'image/gif' }),

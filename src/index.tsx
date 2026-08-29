@@ -1,5 +1,5 @@
 import { render } from 'solid-js/web';
-import * as monaco from 'monaco-editor';
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import App from './App';
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import { GLSL_LANGUAGE_ID, glslMonarch } from './editor/glslLanguage';

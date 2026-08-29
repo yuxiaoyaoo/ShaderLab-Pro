@@ -1,24 +1,32 @@
 import { Show, createSignal } from 'solid-js';
 import type { Accessor } from 'solid-js';
+import { t, type TranslationKey, type TranslationParams } from '../i18n';
 import type { RuntimeApi } from '../shadertoy/runtime';
 import { blobToBase64, pickFolder, writeBinaryFile } from '../project/bridge';
 import { joinPath } from '../project/types';
 import { pcmToWav } from '../export/wav';
+import type { VideoExportOpts } from '../export/videoExport';
 import {
   describeMime,
-  exportVideo,
+  isMp4ExportSupported,
   pickVideoMime,
-  type VideoExportOpts,
-} from '../export/videoExport';
-import { GIF_MAX_FPS, clampGifFps, exportGif } from '../export/gifExport';
-import { exportMp4, isMp4ExportSupported } from '../export/mp4Export';
+} from '../export/videoExportCapabilities';
+import type { ExportEligibility, ExportRequirements, ExportTicket } from '../export/exportEligibility';
+import { formatProductMessageSummary } from '../productMessageFormatter';
+import { normalizeProductMessage, ProductError, type ProductMessageDescriptor } from '../productMessage';
+import ProductMessageView from './ProductMessageView';
 import { useModalFocus } from './modalFocus';
 
 interface Props {
   api: Accessor<RuntimeApi | null>;
+  captureTicket: (requirements: ExportRequirements) => ExportEligibility;
+  validateTicket: (ticket: ExportTicket) => ExportEligibility;
   onClose: () => void;
   onDone?: (msg: string, kind: 'ok' | 'error') => void;
 }
+
+const GIF_MAX_FPS = 50;
+const clampGifFps = (fps: number) => Math.max(1, Math.min(GIF_MAX_FPS, Math.round(fps)));
 
 const BITRATES = [
   { label: '1 Mbps', value: 1_000_000 },
@@ -45,6 +53,16 @@ type OutputSize = { width: number; height: number };
 
 type Phase = 'none' | 'audio' | 'frames';
 
+type ProductMessage = {
+  key: TranslationKey;
+  params?: TranslationParams;
+};
+
+type ProductResult = ProductMessage & {
+  ok: boolean;
+  descriptor?: ProductMessageDescriptor;
+};
+
 export default function ExportDialog(props: Props) {
   let dialogRef: HTMLDivElement | undefined;
   useModalFocus(() => dialogRef);
@@ -63,10 +81,11 @@ export default function ExportDialog(props: Props) {
   const [done, setDone] = createSignal(0);
   const [total, setTotal] = createSignal(0);
   const [phase, setPhase] = createSignal<Phase>('none');
-  const [result, setResult] = createSignal<{ ok: boolean; text: string } | null>(null);
+  const [result, setResult] = createSignal<ProductResult | null>(null);
   const videoSupported = () => typeof MediaRecorder !== 'undefined' && !!pickVideoMime();
   const mp4Supported = isMp4ExportSupported();
   let cancelled = false;
+  let ticketFailureReason: ProductMessageDescriptor | undefined;
   let startedAt = 0;
 
   const outputSize = (): OutputSize => {
@@ -79,90 +98,134 @@ export default function ExportDialog(props: Props) {
     return RESOLUTIONS[Number(resolution())] ?? RESOLUTIONS[0];
   };
 
-  const validateOutputSize = (candidate?: OutputSize): OutputSize | string => {
+  const validateOutputSize = (candidate?: OutputSize): OutputSize | ProductMessage => {
     const size = candidate ?? outputSize();
     if (!Number.isFinite(size.width) || !Number.isInteger(size.width)
       || !Number.isFinite(size.height) || !Number.isInteger(size.height)) {
-      return '宽度和高度必须是整数';
+      return { key: 'export.validation.integerDimensions' };
     }
-    const min = format() === 'webm' || format() === 'mp4' ? 64 : format() === 'gif' ? 2 : 1;
+    const isVideo = format() === 'webm' || format() === 'mp4';
+    const min = isVideo ? 64 : format() === 'gif' ? 2 : 1;
     if (size.width < min || size.height < min) {
-      return `${format() === 'webm' || format() === 'mp4' ? '视频' : '当前格式'}分辨率不得小于 ${min}×${min}`;
+      return {
+        key: isVideo
+          ? 'export.validation.videoMinResolution'
+          : 'export.validation.formatMinResolution',
+        params: { min },
+      };
     }
     if (size.width > MAX_EXPORT_DIMENSION || size.height > MAX_EXPORT_DIMENSION) {
-      return `单边尺寸不能超过 ${MAX_EXPORT_DIMENSION} 像素`;
+      return { key: 'export.validation.maxDimension', params: { max: MAX_EXPORT_DIMENSION } };
     }
     if (size.width * size.height > MAX_EXPORT_PIXELS) {
-      return '总像素不能超过 8K（约 3318 万像素）';
+      return { key: 'export.validation.maxPixels', params: { label: '8K', pixels: 3318 } };
     }
-    if ((format() === 'webm' || format() === 'mp4')
-      && (size.width % 2 !== 0 || size.height % 2 !== 0)) {
-      return '视频编码要求宽度和高度均为偶数';
+    if (isVideo && (size.width % 2 !== 0 || size.height % 2 !== 0)) {
+      return { key: 'export.validation.evenVideoDimensions' };
     }
     return size;
   };
 
   const chooseDir = async () => {
     try {
-      const d = await pickFolder(
-        format() === 'png'
-          ? '选择序列帧输出目录'
-          : format() === 'webm'
-            ? '选择视频输出目录'
-            : format() === 'mp4'
-              ? '选择 MP4 输出目录'
-              : format() === 'gif'
-                ? '选择 GIF 输出目录'
-                : '选择音频输出目录',
-      );
+      const pickerKey = format() === 'png'
+        ? 'export.picker.pngDirectory'
+        : format() === 'webm'
+          ? 'export.picker.webmDirectory'
+          : format() === 'mp4'
+            ? 'export.picker.mp4Directory'
+            : format() === 'gif'
+              ? 'export.picker.gifDirectory'
+              : 'export.picker.wavDirectory';
+      const d = await pickFolder(t(pickerKey));
       if (d) {
         setOutDir(d);
         setResult(null);
       }
-    } catch (e) {
-      setResult({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } catch (error) {
+      setResult({
+        ok: false,
+        key: 'export.error.chooseDirectory',
+        descriptor: normalizeProductMessage(error, 'bridge.pick-folder-failed'),
+      });
     }
   };
 
-  const finish = (ok: boolean, text: string) => {
-    setResult({ ok, text });
-    props.onDone?.(text, ok ? 'ok' : 'error');
+  const finish = (
+    ok: boolean,
+    key: TranslationKey,
+    params?: TranslationParams,
+    descriptor?: ProductMessageDescriptor,
+  ) => {
+    setResult({ ok, key, params, descriptor });
+    const renderedParams = descriptor
+      ? { ...params, detail: formatProductMessageSummary(descriptor) }
+      : params;
+    props.onDone?.(t(key, renderedParams), ok ? 'ok' : 'error');
   };
+
+  const resultText = () => {
+    const value = result();
+    if (!value) return '';
+    const params = value.descriptor
+      ? { ...value.params, detail: formatProductMessageSummary(value.descriptor) }
+      : value.params;
+    return t(value.key, params);
+  };
+
+  const requestedDomains = (): ExportRequirements => ({
+    visual: format() !== 'wav',
+    sound: format() === 'wav' || ((format() === 'mp4' || format() === 'webm') && includeAudio()),
+  });
 
   const startExport = async () => {
     if (running()) return;
+    const captured = props.captureTicket(requestedDomains());
+    if (!captured.eligible || !captured.ticket) {
+      if (captured.reason) {
+        setResult({
+          ok: false,
+          key: 'export.error.unavailable',
+          descriptor: captured.reason,
+        });
+      } else {
+        setResult({ ok: false, key: 'export.validation.domainUnavailable' });
+      }
+      return;
+    }
+    const exportTicket = captured.ticket;
     const api = props.api();
     if (!api) return;
     const s = Number.parseFloat(start());
     const dur = Number.parseFloat(duration());
     if (format() !== 'wav' && (!Number.isFinite(s) || s < 0)) {
-      setResult({ ok: false, text: '起始时间必须是非负数字' });
+      setResult({ ok: false, key: 'export.validation.startNonNegative' });
       return;
     }
     if (!Number.isFinite(dur) || dur <= 0) {
-      setResult({ ok: false, text: '时长必须大于 0 秒' });
+      setResult({ ok: false, key: 'export.validation.durationPositive' });
       return;
     }
     if (dur > 120 && (format() === 'wav'
       || ((format() === 'mp4' || format() === 'webm') && includeAudio()))) {
-      setResult({ ok: false, text: '包含音频的导出时长不能超过 120 秒' });
+      setResult({ ok: false, key: 'export.validation.audioDurationLimit', params: { seconds: 120 } });
       return;
     }
     const sizeResult = format() === 'wav' ? null : validateOutputSize();
-    if (typeof sizeResult === 'string') {
-      setResult({ ok: false, text: sizeResult });
+    if (sizeResult && 'key' in sizeResult) {
+      setResult({ ok: false, ...sizeResult });
       return;
     }
     const size = sizeResult as OutputSize | null;
     if (!outDir()) {
-      setResult({ ok: false, text: '请先选择输出目录' });
+      setResult({ ok: false, key: 'export.validation.outputDirectoryRequired' });
       return;
     }
     // GIF 帧延迟受浏览器 ≥20ms 限制，60 FPS 会自动钳制到 50。
     const effFps = format() === 'gif' ? clampGifFps(fps()) : fps();
     const requestedFrames = Math.max(1, Math.round(dur * effFps));
     if (format() !== 'wav' && requestedFrames > 3600) {
-      setResult({ ok: false, text: '单次最多导出 3600 帧，请降低时长或帧率' });
+      setResult({ ok: false, key: 'export.validation.frameLimit', params: { max: 3600 } });
       return;
     }
     const n = format() === 'wav' ? 1 : requestedFrames;
@@ -171,6 +234,37 @@ export default function ExportDialog(props: Props) {
     setPhase('none');
     setResult(null);
     cancelled = false;
+    ticketFailureReason = undefined;
+    const guardCancelled = () => {
+      if (!cancelled) {
+        const guard = props.validateTicket(exportTicket);
+        if (!guard.eligible) {
+          ticketFailureReason = guard.reason ?? { code: 'export.ticket-expired' };
+          cancelled = true;
+        }
+      }
+      return cancelled;
+    };
+    const ensureTicket = () => {
+      const guard = props.validateTicket(exportTicket);
+      if (!guard.eligible) {
+        ticketFailureReason = guard.reason ?? { code: 'export.ticket-expired' };
+        cancelled = true;
+        throw new ProductError(ticketFailureReason);
+      }
+    };
+    const finishCancelled = (key: TranslationKey, params?: TranslationParams) => {
+      if (ticketFailureReason) {
+        finish(
+          false,
+          'export.status.abortedContentChanged',
+          undefined,
+          ticketFailureReason,
+        );
+      } else {
+        finish(true, key, params);
+      }
+    };
     startedAt = performance.now();
     setRunning(true);
     const wasRunning = api.isRunning();
@@ -182,28 +276,36 @@ export default function ExportDialog(props: Props) {
         const pfx = (prefix().trim() || 'frame').replace(/[^\w-]/g, '_');
         let written = 0;
         for (let i = 0; i < n; i++) {
-          if (cancelled) break;
+          if (guardCancelled()) break;
           const blob = await api.captureAt(
             s + i / fps(),
             startFrame + i,
             1 / fps(),
             size!,
           );
-          if (!blob) throw new Error(`第 ${i + 1} 帧捕获失败`);
+          if (!blob) {
+            throw new ProductError({ code: 'export.frame-capture-failed', params: { frame: i + 1 } });
+          }
           const b64 = await blobToBase64(blob);
+          ensureTicket();
           const name = `${pfx}_${String(i + 1).padStart(4, '0')}.png`;
           await writeBinaryFile(joinPath(outDir(), name), b64);
           written++;
           setDone(i + 1);
         }
-        finish(
-          true,
-          cancelled
-            ? `已取消：完成 ${written}/${n} 帧`
-            : `已导出 ${n} 帧 PNG（${size!.width}×${size!.height}）→ ${outDir()}`,
-        );
+        if (cancelled) {
+          finishCancelled('export.status.cancelledFrames', { done: written, total: n });
+        } else {
+          finish(true, 'export.success.png', {
+            frames: n,
+            width: size!.width,
+            height: size!.height,
+            path: outDir(),
+          });
+        }
       } else if (format() === 'gif') {
         setPhase('frames');
+        const { exportGif } = await import('../export/gifExport');
         const out = await exportGif(
           api,
           {
@@ -215,24 +317,32 @@ export default function ExportDialog(props: Props) {
             maxColors: 256,
           },
           (d) => setDone(d),
-          () => cancelled,
+          guardCancelled,
         );
         const b64 = await blobToBase64(out.blob);
+        ensureTicket();
         const name = `${(prefix().trim() || 'clip').replace(/[^\w-]/g, '_')}.gif`;
         await writeBinaryFile(joinPath(outDir(), name), b64);
-        finish(
-          true,
-          cancelled
-            ? `已取消：完成 ${out.totalFrames}/${n} 帧`
-            : `已导出 GIF 动图（${size!.width}×${size!.height} · ${out.totalFrames} 帧 · ${effFps} FPS · 256 色/帧）→ ${outDir()}\\${name}`,
-        );
+        if (cancelled) {
+          finishCancelled('export.status.cancelledFrames', { done: out.totalFrames, total: n });
+        } else {
+          finish(true, 'export.success.gif', {
+            width: size!.width,
+            height: size!.height,
+            frames: out.totalFrames,
+            fps: effFps,
+            colors: 256,
+            path: `${outDir()}\\${name}`,
+          });
+        }
       } else if (format() === 'mp4') {
+        const { exportMp4 } = await import('../export/mp4Export');
         let pcm = null;
         if (includeAudio()) {
           setPhase('audio');
-          pcm = await api.renderAudio(dur, 48000, () => cancelled, s);
-          if (cancelled) {
-            finish(true, '已取消音频合成');
+          pcm = await api.renderAudio(dur, 48000, guardCancelled, s);
+          if (guardCancelled()) {
+            finishCancelled('export.status.cancelledAudio');
             return;
           }
         }
@@ -250,49 +360,61 @@ export default function ExportDialog(props: Props) {
             hasAudio: includeAudio(),
           },
           (d) => setDone(d),
-          () => cancelled,
+          guardCancelled,
         );
-        if (cancelled) {
-          finish(true, `已取消：完成 ${out.totalFrames}/${n} 帧编码`);
+        if (guardCancelled()) {
+          finishCancelled('export.status.cancelledEncoding', {
+            done: out.totalFrames,
+            total: n,
+          });
         } else {
           const b64 = await blobToBase64(out.blob);
+          ensureTicket();
           const name = `${(prefix().trim() || 'clip').replace(/[^\w-]/g, '_')}.mp4`;
           await writeBinaryFile(joinPath(outDir(), name), b64);
-          const audioNote = includeAudio()
+          const successKey = includeAudio()
             ? out.audioUsed
-              ? '（含 mainSound AAC 音轨）'
-              : '（无 Sound Pass 音轨）'
-            : '（无声）';
-          finish(
-            true,
-            `已导出 MP4（H.264）视频 ${audioNote}（${size!.width}×${size!.height} · ${out.totalFrames} 帧 · ${dur}s）→ ${outDir()}\\${name}`,
-          );
+              ? 'export.success.mp4.mainSoundAac'
+              : 'export.success.mp4.noSoundPass'
+            : 'export.success.mp4.muted';
+          finish(true, successKey, {
+            width: size!.width,
+            height: size!.height,
+            frames: out.totalFrames,
+            duration: dur,
+            path: `${outDir()}\\${name}`,
+          });
         }
       } else if (format() === 'wav') {
         setPhase('audio');
-        const pcm = await api.renderAudio(dur, 48000, () => cancelled);
-        if (cancelled) {
-          finish(true, '已取消音频合成');
+        const pcm = await api.renderAudio(dur, 48000, guardCancelled);
+        if (guardCancelled()) {
+          finishCancelled('export.status.cancelledAudio');
         } else if (!pcm) {
-          finish(false, '未找到 mainSound 音频代码（请编辑 Sound 标签页添加）');
+          finish(false, 'export.error.noMainSound');
         } else {
           const wav = pcmToWav(pcm);
           const b64 = await blobToBase64(wav);
+          ensureTicket();
           const name = `${(prefix().trim() || 'audio').replace(/[^\w-]/g, '_')}.wav`;
           await writeBinaryFile(joinPath(outDir(), name), b64);
-          finish(true, `已导出 WAV 音频（${dur}s · 48kHz 立体声）→ ${outDir()}\\${name}`);
+          finish(true, 'export.success.wav', {
+            duration: dur,
+            sampleRate: '48kHz',
+            path: `${outDir()}\\${name}`,
+          });
         }
       } else {
         const mime = pickVideoMime();
         if (!mime) {
-          finish(false, '当前环境不支持视频编码（缺少 MediaRecorder 编码器）');
+          finish(false, 'export.error.videoUnsupported');
         } else {
           let pcm = null;
           if (includeAudio()) {
             setPhase('audio');
-            pcm = await api.renderAudio(dur, 48000, () => cancelled, s);
-            if (cancelled) {
-              finish(true, '已取消音频合成');
+            pcm = await api.renderAudio(dur, 48000, guardCancelled, s);
+            if (guardCancelled()) {
+              finishCancelled('export.status.cancelledAudio');
               return;
             }
           }
@@ -308,29 +430,46 @@ export default function ExportDialog(props: Props) {
             audio: pcm,
             hasAudio: includeAudio(),
           };
+          const { exportVideo } = await import('../export/videoExport');
           const out = await exportVideo(
             api,
             opts,
             (d) => setDone(d),
-            () => cancelled,
+            guardCancelled,
           );
-          if (cancelled) {
-            finish(true, `已取消：完成 ${out.totalFrames}/${n} 帧编码`);
+          if (guardCancelled()) {
+            finishCancelled('export.status.cancelledEncoding', {
+              done: out.totalFrames,
+              total: n,
+            });
           } else {
             const b64 = await blobToBase64(out.blob);
+            ensureTicket();
             const name = `${(prefix().trim() || 'clip').replace(/[^\w-]/g, '_')}.webm`;
             await writeBinaryFile(joinPath(outDir(), name), b64);
-            const audioNote = includeAudio()
+            const successKey = includeAudio()
               ? out.audioUsed
-                ? '（含 mainSound 音轨）'
-                : '（无 Sound Pass 音轨）'
-              : '（无声）';
-            finish(true, `已导出 ${describeMime(mime)} 视频 ${audioNote}（${size!.width}×${size!.height} · ${n} 帧 · ${dur}s）→ ${outDir()}\\${name}`);
+                ? 'export.success.webm.mainSound'
+                : 'export.success.webm.noSoundPass'
+              : 'export.success.webm.muted';
+            finish(true, successKey, {
+              codec: describeMime(mime),
+              width: size!.width,
+              height: size!.height,
+              frames: n,
+              duration: dur,
+              path: `${outDir()}\\${name}`,
+            });
           }
         }
       }
-    } catch (e) {
-      finish(false, `导出失败（已完成 ${done()}/${n} 帧）：${e instanceof Error ? e.message : String(e)}`);
+    } catch (error) {
+      finish(
+        false,
+        'export.error.failed',
+        { done: done(), total: n },
+        normalizeProductMessage(error, 'export.failed'),
+      );
     } finally {
       setPhase('none');
       setRunning(false);
@@ -371,12 +510,12 @@ export default function ExportDialog(props: Props) {
         aria-labelledby="export-dialog-title"
         tabindex="-1"
       >
-        <h3 id="export-dialog-title">导出 PNG / GIF / MP4 / WebM / WAV</h3>
+        <h3 id="export-dialog-title">{t('export.title')}</h3>
         <div class="field-row">
-          <label>格式</label>
+          <label>{t('export.format')}</label>
           <select
             class="res-select"
-            aria-label="导出格式"
+            aria-label={t('export.format')}
             value={format()}
             onChange={(e) => {
               const v = e.currentTarget.value as 'png' | 'webm' | 'mp4' | 'gif' | 'wav';
@@ -388,47 +527,47 @@ export default function ExportDialog(props: Props) {
             }}
             disabled={running()}
           >
-            <option value="png">PNG 序列帧</option>
-            <option value="gif">GIF 动图（逐帧调色板）</option>
+            <option value="png">{t('export.format.png')}</option>
+            <option value="gif">{t('export.format.gif')}</option>
             <option value="mp4" disabled={!mp4Supported}>
-              MP4 视频（H.264 · WebCodecs）
+              {t('export.format.mp4')}
             </option>
             <option value="webm" disabled={!videoSupported()}>
-              WebM 视频
+              {t('export.format.webm')}
             </option>
-            <option value="wav">WAV 音频（mainSound）</option>
+            <option value="wav">{t('export.format.wav')}</option>
           </select>
         </div>
         <Show when={format() !== 'wav'}>
           <div class="field-row">
-            <label>起始时间</label>
+            <label>{t('export.startTime')}</label>
             <input
               class="text-input"
-              aria-label="起始时间（秒）"
+              aria-label={t('export.startTime')}
               value={start()}
               onInput={(e) => setStart(e.currentTarget.value)}
               disabled={running()}
             />
-            <span class="field-unit">秒</span>
+            <span class="field-unit">{t('export.secondsUnit')}</span>
           </div>
         </Show>
         <div class="field-row">
-          <label>时长</label>
+          <label>{t('export.duration')}</label>
           <input
             class="text-input"
-            aria-label="导出时长（秒）"
+            aria-label={t('export.duration')}
             value={duration()}
             onInput={(e) => setDuration(e.currentTarget.value)}
             disabled={running()}
           />
-          <span class="field-unit">秒</span>
+          <span class="field-unit">{t('export.secondsUnit')}</span>
         </div>
         <Show when={format() !== 'wav'}>
           <div class="field-row">
-            <label>帧率</label>
+            <label>{t('export.frameRate')}</label>
             <select
               class="res-select"
-              aria-label="导出帧率"
+              aria-label={t('export.frameRate')}
               value={fps()}
               onChange={(e) => setFps(Number(e.currentTarget.value))}
               disabled={running()}
@@ -441,28 +580,32 @@ export default function ExportDialog(props: Props) {
                 </option>
               ))}
             </select>
-            {format() === 'gif' ? <span class="field-unit">浏览器帧延迟上限 50 FPS</span> : null}
+            {format() === 'gif'
+              ? <span class="field-unit">{t('export.gif.maxFpsHint', { max: GIF_MAX_FPS })}</span>
+              : null}
           </div>
         </Show>
         <Show when={format() === 'png'}>
           <div class="field-row">
-            <label>文件前缀</label>
+            <label>{t('export.filePrefix')}</label>
             <input
               class="text-input"
-              aria-label="文件前缀"
+              aria-label={t('export.filePrefix')}
               value={prefix()}
               onInput={(e) => setPrefix(e.currentTarget.value)}
               disabled={running()}
             />
-            <span class="field-unit">_0001.png 起</span>
+            <span class="field-unit">
+              {t('export.png.sequenceStartsAt', { file: '_0001.png' })}
+            </span>
           </div>
         </Show>
         <Show when={format() === 'wav'}>
           <div class="field-row">
-            <label>文件前缀</label>
+            <label>{t('export.filePrefix')}</label>
             <input
               class="text-input"
-              aria-label="文件前缀"
+              aria-label={t('export.filePrefix')}
               value={prefix()}
               onInput={(e) => setPrefix(e.currentTarget.value)}
               disabled={running()}
@@ -472,10 +615,10 @@ export default function ExportDialog(props: Props) {
         </Show>
         <Show when={format() === 'webm' || format() === 'mp4'}>
           <div class="field-row">
-            <label>码率</label>
+            <label>{t('export.bitrate')}</label>
             <select
               class="res-select"
-              aria-label="视频码率"
+              aria-label={t('export.bitrate')}
               value={bitrate()}
               onChange={(e) => setBitrate(Number(e.currentTarget.value))}
               disabled={running()}
@@ -488,10 +631,10 @@ export default function ExportDialog(props: Props) {
         </Show>
         <Show when={format() !== 'wav'}>
           <div class="field-row">
-            <label>分辨率</label>
+            <label>{t('export.resolution')}</label>
             <select
               class="res-select"
-              aria-label="导出分辨率"
+              aria-label={t('export.resolution')}
               value={resolution()}
               onChange={(e) => {
                 setResolution(e.currentTarget.value);
@@ -502,17 +645,17 @@ export default function ExportDialog(props: Props) {
               {RESOLUTIONS.map((r, i) => (
                 <option value={String(i)}>{r.label}</option>
               ))}
-              <option value={CUSTOM_RESOLUTION}>自定义…</option>
+              <option value={CUSTOM_RESOLUTION}>{t('common.custom')}</option>
             </select>
           </div>
           <Show when={resolution() === CUSTOM_RESOLUTION}>
             <div class="field-row">
-              <label>自定义</label>
+              <label>{t('export.custom')}</label>
               <div class="resolution-inputs">
                 <input
                   type="number"
                   class="text-input"
-                  aria-label="导出宽度"
+                  aria-label={t('export.width')}
                   min="1"
                   max={MAX_EXPORT_DIMENSION}
                   step="1"
@@ -527,7 +670,7 @@ export default function ExportDialog(props: Props) {
                 <input
                   type="number"
                   class="text-input"
-                  aria-label="导出高度"
+                  aria-label={t('export.height')}
                   min="1"
                   max={MAX_EXPORT_DIMENSION}
                   step="1"
@@ -543,22 +686,28 @@ export default function ExportDialog(props: Props) {
             </div>
           </Show>
           <div class="field-hint export-size-hint">
-            Shader 将按目标尺寸原生重渲染；最高约 8K。MP4/WebM 的宽高需为偶数且不小于 64。
+            {t('export.sizeHint')}
           </div>
         </Show>
         <Show when={format() === 'webm' && videoSupported()}>
           <div class="menu-info" style="margin-top: 2px; padding: 0 4px">
-            编码器：{describeMime(pickVideoMime()!)}（逐帧确定性捕获）
+            {t('export.codec.webmInfo', { codec: describeMime(pickVideoMime()!) })}
           </div>
         </Show>
         <Show when={format() === 'mp4'}>
           <div class="menu-info" style="margin-top: 2px; padding: 0 4px">
-            编码器：H.264（WebCodecs）· 关键帧间隔 2s · AAC 音轨 48kHz
+            {t('export.codec.mp4Info', {
+              codec: 'H.264',
+              api: 'WebCodecs',
+              keyframeInterval: '2s',
+              audioCodec: 'AAC',
+              sampleRate: '48kHz',
+            })}
           </div>
         </Show>
         <Show when={format() === 'webm' || format() === 'mp4'}>
           <div class="field-row" style="margin-top: 6px">
-            <label>包含音频</label>
+            <label>{t('export.includeAudio')}</label>
             <label class="pass-toggle">
               <input
                 type="checkbox"
@@ -566,16 +715,16 @@ export default function ExportDialog(props: Props) {
                 onChange={(e) => setIncludeAudio(e.currentTarget.checked)}
                 disabled={running()}
               />
-              <span>mainSound 合成音轨</span>
+              <span>{t('export.audioTrack')}</span>
             </label>
           </div>
         </Show>
         <Show when={format() !== 'png' && format() !== 'wav'}>
           <div class="field-row" style="margin-top: 2px">
-            <label>文件前缀</label>
+            <label>{t('export.filePrefix')}</label>
             <input
               class="text-input"
-              aria-label="文件前缀"
+              aria-label={t('export.filePrefix')}
               value={prefix()}
               onInput={(e) => setPrefix(e.currentTarget.value)}
               disabled={running()}
@@ -586,10 +735,10 @@ export default function ExportDialog(props: Props) {
           </div>
         </Show>
         <div class="field-row">
-          <label>输出目录</label>
-          <span class="dir-path">{outDir() || '未选择'}</span>
+          <label>{t('export.outputDirectory')}</label>
+          <span class="dir-path">{outDir() || t('export.notSelected')}</span>
           <button class="btn" onClick={chooseDir} disabled={running()}>
-            选择…
+            {t('export.choose')}
           </button>
         </div>
         <Show when={running()}>
@@ -600,7 +749,7 @@ export default function ExportDialog(props: Props) {
                 <div
                   class="progress-track"
                   role="progressbar"
-                  aria-label="导出进度"
+                  aria-label={t('export.progress')}
                   aria-valuemin="0"
                   aria-valuemax="100"
                   aria-valuenow={pct()}
@@ -608,34 +757,56 @@ export default function ExportDialog(props: Props) {
                   <div class="progress-fill" style={{ width: `${pct()}%` }} />
                 </div>
                 <div class="progress-text">
-                  {done()}/{total()} 帧（{pct()}%）
-                  {eta() !== null ? ` · 预计剩余 ${eta()}s` : ''}
+                  {t('export.progress.frames', {
+                    done: done(),
+                    total: total(),
+                    percent: pct(),
+                  })}
+                  {eta() !== null
+                    ? t('export.progress.eta', { seconds: eta()! })
+                    : ''}
                 </div>
               </>
             }
           >
-            <div class="progress-text">合成音频（mainSound）… 可随时取消</div>
+            <div class="progress-text">{t('export.progress.audio')}</div>
           </Show>
         </Show>
         <Show when={result()}>
-          <div class="export-result" classList={{ err: !result()!.ok }} role="status">
-            {result()!.text}
-          </div>
+          {(value) => (
+            <Show
+              when={value().descriptor}
+              fallback={(
+                <div class="export-result" classList={{ err: !value().ok }} role="status">
+                  {resultText()}
+                </div>
+              )}
+            >
+              {(descriptor) => (
+                <ProductMessageView
+                  class={`export-result${!value().ok ? ' err' : ''}`}
+                  value={descriptor()}
+                  summary={resultText()}
+                  role="status"
+                />
+              )}
+            </Show>
+          )}
         </Show>
         <div class="modal-actions">
           <Show
             when={!running()}
             fallback={
               <button class="btn danger" onClick={() => (cancelled = true)}>
-                取消导出
+                {t('export.stop')}
               </button>
             }
           >
             <button class="btn primary" onClick={startExport}>
-              开始导出
+              {t('export.start')}
             </button>
             <button class="btn" onClick={() => props.onClose()}>
-              关闭
+              {t('common.close')}
             </button>
           </Show>
         </div>

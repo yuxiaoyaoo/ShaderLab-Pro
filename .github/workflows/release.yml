@@ -52,6 +52,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: npm run verify:release-version
+
+      - name: Verify product messages
+        run: npm run verify:product-messages
+
       - name: Build & Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -72,9 +80,10 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'ShaderLab Pro ${{ github.ref_name }}'
           releaseBody: 'See the assets to download this version and install.'
+          # 保持草稿用于人工核验签名与 latest.json；核验后必须发布，/releases/latest 不会返回草稿。
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
           # 生成 latest.json 作为自动更新端点（静态清单）
-          publishUpdaterJson: true
+          includeUpdaterJson: true
           updaterJsonPreferNsis: true

@@ -13,6 +13,34 @@ const MAX_NAME_CHARS: usize = 32;
 const MAX_CODE_BYTES: usize = 256 * 1024;
 const MAIN_IMAGE_SIGNATURE: &str = "void mainImage(out vec4 fragColor, in vec2 fragCoord)";
 
+#[derive(Debug)]
+pub enum UserTemplateError {
+    NameEmpty,
+    NameTooLong { max: usize },
+    CodeEmpty,
+    CodeTooLarge { max_kb: usize },
+    EntryMissing { signature: &'static str },
+    UniformDeclared,
+    DirectoryCreate(String),
+    NameInvalid,
+    NameCollision,
+    Serialize(String),
+    Write(String),
+    SlugInvalid { slug: String },
+    NotFound,
+    Delete(String),
+}
+
+/// Persist only locale-neutral difficulty IDs while accepting historical localized values.
+pub fn normalize_difficulty_id(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "intermediate" | "进阶" => "intermediate",
+        "advanced" | "高级" => "advanced",
+        "beginner" | "入门" => "beginner",
+        _ => "beginner",
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ManifestEntry {
     slug: String,
@@ -80,11 +108,7 @@ impl UserTemplateRecord {
             category: USER_CATEGORY.to_string(),
             description: self.description,
             tags: self.tags,
-            difficulty: if self.difficulty.is_empty() {
-                "beginner".to_string()
-            } else {
-                self.difficulty
-            },
+            difficulty: normalize_difficulty_id(&self.difficulty).to_string(),
             uniforms,
             code: self.code,
         }
@@ -153,7 +177,11 @@ fn sanitize_file_stem(raw: &str) -> String {
     let mut out = String::new();
     for ch in raw.trim().chars() {
         if is_name_char(ch) {
-            out.push(if ch.is_ascii() { ch.to_ascii_lowercase() } else { ch });
+            out.push(if ch.is_ascii() {
+                ch.to_ascii_lowercase()
+            } else {
+                ch
+            });
         } else if ch.is_whitespace() {
             out.push('-');
         } else if !ch.is_ascii() && !ch.is_control() {
@@ -163,26 +191,32 @@ fn sanitize_file_stem(raw: &str) -> String {
     out.chars().take(MAX_NAME_CHARS).collect()
 }
 
-fn validate_user_record(record: &UserTemplateRecord) -> Result<(), String> {
+fn validate_user_record(record: &UserTemplateRecord) -> Result<(), UserTemplateError> {
     let name = record.name.trim();
     if name.is_empty() {
-        return Err("模板名称不能为空".to_string());
+        return Err(UserTemplateError::NameEmpty);
     }
     if name.chars().count() > MAX_NAME_CHARS {
-        return Err(format!("模板名称过长（最多 {} 字）", MAX_NAME_CHARS));
+        return Err(UserTemplateError::NameTooLong {
+            max: MAX_NAME_CHARS,
+        });
     }
     if record.code.trim().is_empty() {
-        return Err("模板代码不能为空".to_string());
+        return Err(UserTemplateError::CodeEmpty);
     }
     if record.code.len() > MAX_CODE_BYTES {
-        return Err("模板代码过大（上限 256KB）".to_string());
+        return Err(UserTemplateError::CodeTooLarge {
+            max_kb: MAX_CODE_BYTES / 1024,
+        });
     }
     if !record.code.contains(MAIN_IMAGE_SIGNATURE) {
-        return Err(format!("缺少 Shadertoy 入口签名：{}", MAIN_IMAGE_SIGNATURE));
+        return Err(UserTemplateError::EntryMissing {
+            signature: MAIN_IMAGE_SIGNATURE,
+        });
     }
     // 与内置模板同规：核心 uniform 由预览包装器注入，自声明会引发重定义冲突
     if record.code.contains("uniform ") {
-        return Err("不允许自声明 uniform（iTime/iResolution 等由运行时自动注入）".to_string());
+        return Err(UserTemplateError::UniformDeclared);
     }
     Ok(())
 }
@@ -210,14 +244,18 @@ pub fn list_user_entries(base: &Path) -> Vec<TemplateEntry> {
 }
 
 /// 按名称保存（同名覆盖 = 更新，不同名但清洗后同名则追加序号避让）
-pub fn save_user_entry(base: &Path, record: UserTemplateRecord) -> Result<TemplateEntry, String> {
+pub fn save_user_entry(
+    base: &Path,
+    record: UserTemplateRecord,
+) -> Result<TemplateEntry, UserTemplateError> {
     validate_user_record(&record)?;
     let dir = user_templates_dir(base);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建用户模板目录失败: {}", e))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| UserTemplateError::DirectoryCreate(error.to_string()))?;
 
     let stem_base = sanitize_file_stem(&record.name);
     if stem_base.is_empty() {
-        return Err("模板名称需包含字母、数字或汉字等可用字符".to_string());
+        return Err(UserTemplateError::NameInvalid);
     }
 
     let name_trimmed = record.name.trim().to_string();
@@ -227,8 +265,7 @@ pub fn save_user_entry(base: &Path, record: UserTemplateRecord) -> Result<Templa
         let path = dir.join(format!("{}.json", candidate));
         match std::fs::read_to_string(&path) {
             Ok(existing) => {
-                let existing: Option<UserTemplateRecord> =
-                    serde_json::from_str(&existing).ok();
+                let existing: Option<UserTemplateRecord> = serde_json::from_str(&existing).ok();
                 match existing {
                     Some(rec) if rec.name.trim() == name_trimmed => break,
                     _ => {
@@ -240,7 +277,7 @@ pub fn save_user_entry(base: &Path, record: UserTemplateRecord) -> Result<Templa
             Err(_) => break,
         }
         if seq > 99 {
-            return Err("模板文件名避让失败，请更换模板名".to_string());
+            return Err(UserTemplateError::NameCollision);
         }
     }
 
@@ -254,23 +291,29 @@ pub fn save_user_entry(base: &Path, record: UserTemplateRecord) -> Result<Templa
         uniforms: entry.uniforms.clone(),
         code: entry.code.clone(),
     })
-    .map_err(|e| format!("模板序列化失败: {}", e))?;
-    std::fs::write(&path, json).map_err(|e| format!("写入模板文件失败: {}", e))?;
+    .map_err(|error| UserTemplateError::Serialize(error.to_string()))?;
+    std::fs::write(&path, json)
+        .map_err(|error| UserTemplateError::Write(error.to_string()))?;
     Ok(entry)
 }
 
-pub fn delete_user_entry(base: &Path, slug: &str) -> Result<(), String> {
+pub fn delete_user_entry(base: &Path, slug: &str) -> Result<(), UserTemplateError> {
     let stem = slug
         .strip_prefix(USER_SLUG_PREFIX)
-        .ok_or_else(|| format!("无效的用户模板标识: {}", slug))?;
+        .ok_or_else(|| UserTemplateError::SlugInvalid {
+            slug: slug.to_string(),
+        })?;
     if stem.contains('/') || stem.contains('\\') || stem.contains("..") || stem.trim().is_empty() {
-        return Err(format!("非法的用户模板标识: {}", slug));
+        return Err(UserTemplateError::SlugInvalid {
+            slug: slug.to_string(),
+        });
     }
     let path = user_templates_dir(base).join(format!("{}.json", stem));
     if !path.exists() {
-        return Err("模板不存在或已被删除".to_string());
+        return Err(UserTemplateError::NotFound);
     }
-    std::fs::remove_file(&path).map_err(|e| format!("删除模板文件失败: {}", e))?;
+    std::fs::remove_file(&path)
+        .map_err(|error| UserTemplateError::Delete(error.to_string()))?;
     Ok(())
 }
 
@@ -332,7 +375,10 @@ fn hit_ratio(units: &[String], haystack: &str) -> f32 {
         return 0.0;
     }
     let hay_lower = haystack.to_lowercase();
-    let hits = units.iter().filter(|u| hay_lower.contains(u.as_str())).count();
+    let hits = units
+        .iter()
+        .filter(|u| hay_lower.contains(u.as_str()))
+        .count();
     hits as f32 / units.len().min(HIT_RATIO_DENOM_CAP).max(1) as f32
 }
 
@@ -355,7 +401,7 @@ impl TemplateRegistry {
                 category: raw.category,
                 description: raw.description,
                 tags: raw.tags,
-                difficulty: raw.difficulty,
+                difficulty: normalize_difficulty_id(&raw.difficulty).to_string(),
                 uniforms: raw.uniforms,
                 code,
             });
@@ -379,11 +425,10 @@ impl TemplateRegistry {
     /// 仅内置池按名解析（引用返回，零拷贝路径保留给旧调用方）
     pub fn find_by_name(&self, name: &str) -> Option<&TemplateEntry> {
         let needle = name.trim();
-        self.templates.iter().find(|t| t.name == needle).or_else(|| {
-            self.templates
-                .iter()
-                .find(|t| name_loose_match(t, needle))
-        })
+        self.templates
+            .iter()
+            .find(|t| t.name == needle)
+            .or_else(|| self.templates.iter().find(|t| name_loose_match(t, needle)))
     }
 
     /// 双池合并按名解析：精确匹配优先于宽松包含，内置池优先于用户池。
@@ -407,12 +452,7 @@ impl TemplateRegistry {
     }
 
     /// 兼容旧签名的单池检索
-    pub fn search(
-        &self,
-        query: &str,
-        category: Option<&str>,
-        limit: usize,
-    ) -> Vec<TemplateMatch> {
+    pub fn search(&self, query: &str, category: Option<&str>, limit: usize) -> Vec<TemplateMatch> {
         self.search_in_pools(query, category, limit, &[])
     }
 
@@ -481,11 +521,7 @@ mod tests {
         "void mainImage(out vec4 fragColor, in vec2 fragCoord)\n{\n    fragColor = vec4(0.5);\n}";
 
     fn utest_dir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "sl_utest_{}_{}",
-            std::process::id(),
-            tag
-        ));
+        let d = std::env::temp_dir().join(format!("sl_utest_{}_{}", std::process::id(), tag));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("创建临时目录失败");
         d
@@ -507,8 +543,18 @@ mod tests {
         let reg = TemplateRegistry::global();
         assert_eq!(reg.len(), 30);
         for t in &reg.templates {
-            assert!(t.code.contains("void mainImage(out vec4 fragColor, in vec2 fragCoord)"), "{} 缺少入口签名", t.slug);
-            assert!(!t.code.contains("uniform "), "{} 自声明了 uniform: {:?}", t.slug, t.uniforms);
+            assert!(
+                t.code
+                    .contains("void mainImage(out vec4 fragColor, in vec2 fragCoord)"),
+                "{} 缺少入口签名",
+                t.slug
+            );
+            assert!(
+                !t.code.contains("uniform "),
+                "{} 自声明了 uniform: {:?}",
+                t.slug,
+                t.uniforms
+            );
         }
     }
 
@@ -520,8 +566,7 @@ mod tests {
             assert!(
                 report.success,
                 "{} glslang 校验未通过: {:?}",
-                t.slug,
-                report.errors
+                t.slug, report.errors
             );
         }
     }
@@ -541,7 +586,11 @@ mod tests {
         let reg = TemplateRegistry::global();
         let hits = reg.search("Flame", None, 3);
         let names: Vec<&str> = hits.iter().map(|h| h.name.as_str()).collect();
-        assert!(names.contains(&"粒子火焰") || names.contains(&"噪声火舌"), "english 'flame' miss: {:?}", names);
+        assert!(
+            names.contains(&"粒子火焰") || names.contains(&"噪声火舌"),
+            "english 'flame' miss: {:?}",
+            names
+        );
     }
 
     #[test]
