@@ -1,191 +1,232 @@
 # ShaderLab Pro
 
-> 一款面向图形程序员、技术美术与 Shader 学习者的 **本地专业 GLSL Shader 创作与视频导出工作站**（Shadertoy 本地化的代码优先运行时）。
+> A local, professional **GLSL shader creation and video export workstation** for graphics programmers, technical artists, and shader learners (a code-first, localized Shadertoy runtime).
 
-本仓库基于 **Tauri 2.x**（Rust 后端 + WebView 前端）构建，前端使用 **SolidJS + Vite + TypeScript + Monaco Editor**。
+**Languages:** English · [简体中文](README.zh-CN.md)
+
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#packaging-installers)
+[![Tauri](https://img.shields.io/badge/Tauri-2.x-purple)](https://v2.tauri.app/)
+[![SolidJS](https://img.shields.io/badge/SolidJS-1.9-blue)](https://www.solidjs.com/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue)](https://www.typescriptlang.org/)
+
+Built on **Tauri 2.x** (Rust backend + WebView frontend), with the frontend powered by **SolidJS + Vite + TypeScript + Monaco Editor**.
 
 ---
 
-## 技术栈
+## Features
 
-| 层级 | 选型 | 说明 |
+- **Code-first Shadertoy runtime**: GLSL ES 3.00 / WebGL2 with Shadertoy-style inputs such as `iTime`, `iResolution`, and `iChannel0-3` texture channels;
+- **Monaco Editor**: the same editing experience as VS Code, with built-in GLSL syntax highlighting, IntelliSense, and compile diagnostics;
+- **Visual Pass Graph (Graph Workspace)**: compose render passes with a node graph; GLSL is generated automatically and stays in sync with the code;
+- **Project Gallery (Projects Library)**: thumbnails are captured automatically on save; reopen, delete, or reveal projects in the file manager;
+- **Video / GIF export**: built-in MP4 / GIF / WAV export pipeline with resolution stepping and render process control;
+- **Built-in template library**: GLSL templates organized by geometry, materials, particles, post-processing, and scenes (partly inspired by [Iñigo Quílez](https://iquilezles.org/)'s MIT-licensed code);
+- **AI agent (optional)**: plug in an LLM to modify, compile, and render-verify shaders through an in-app conversation;
+- **Auto-update**: signed incremental updates powered by `tauri-plugin-updater` (see below).
+
+---
+
+## Tech Stack
+
+| Layer | Choice | Notes |
 |---|---|---|
-| 桌面框架 | **Tauri 2.x** (`@tauri-apps/cli` ^2.11) | Rust 后端，体积小、内存低 |
-| 前端框架 | **SolidJS** ^1.9.5 | 细粒度响应式，无 Virtual DOM 开销 |
-| 构建工具 | **Vite** ^6.3.5 | `vite-plugin-solid` 插件 |
-| 语言 | **TypeScript** ~5.8.3 | 严格模式 |
-| 编辑器 | **Monaco Editor** ^0.52.2 | VS Code 同款代码编辑 |
-| 后端语言 | **Rust** (`rust-version` ≥ 1.77.2) | crate 名 `app`，lib 名 `app_lib` |
-| 关键 Rust 依赖 | `tauri` ^2.11, `tauri-plugin-updater`, `tauri-plugin-log`, `rfd`, `rig-core` / `rig-agent` ^0.42 | 文件对话框、AI 代理、更新器 |
+| Desktop framework | **Tauri 2.x** (`@tauri-apps/cli` ^2.11) | Rust backend, small and low-memory |
+| Frontend framework | **SolidJS** ^1.9.5 | Fine-grained reactivity, no Virtual DOM |
+| Build tool | **Vite** ^6.3.5 | via the `vite-plugin-solid` plugin |
+| Language | **TypeScript** ~5.8.3 | strict mode |
+| Editor | **Monaco Editor** ^0.52.2 | VS Code-class code editing |
+| Backend language | **Rust** (`rust-version` ≥ 1.77.2) | crate `app`, lib `app_lib` |
+| Key Rust deps | `tauri` ^2.11, `tauri-plugin-updater`, `tauri-plugin-log`, `rfd`, `rig-core` / `rig-agent` ^0.42 | dialogs, AI agent, updater |
 
 ---
 
-## 环境要求
+## Environment Requirements
 
-### 通用要求
-- **Node.js** ≥ 18.18（推荐 20 LTS），含 npm（仓库使用 `package-lock.json`，用 `npm install`）
-- **Rust 工具链** ≥ 1.77.2（stable 即可），通过 [rustup](https://rustup.rs/) 安装
+### General
 
-### 按平台安装系统依赖
+- **Node.js** ≥ 18.18 (20 LTS recommended), with npm (the repository ships `package-lock.json`; use `npm install`)
+- **Rust toolchain** ≥ 1.77.2 (stable) — install via [rustup](https://rustup.rs/)
 
-| 平台 | 必须的额外依赖 |
+### Platform-specific system dependencies
+
+| Platform | Extra dependencies required |
 |---|---|
-| **Windows** | • **WebView2 Runtime**（Win10 1809+/Win11 已内置；缺失时运行 `npx tauri windows webview-installer`）<br>• **Microsoft C++ Build Tools** / Visual Studio「使用 C++ 的桌面开发」工作负载（提供 MSVC 链接器）<br>• Rust 默认 `x86_64-pc-windows-msvc` target |
-| **macOS** | • **Xcode Command Line Tools**：`xcode-select --install`<br>• 如需通用二进制：`rustup target add aarch64-apple-darwin x86_64-apple-darwin` |
-| **Linux (Ubuntu/Debian)** | `sudo apt install libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev` 等（详见 [Tauri 官方 Linux 依赖](https://v2.tauri.app/start/prerequisites/)）|
+| **Windows** | • **WebView2 Runtime** (built into Windows 10 1809+ / Windows 11; run `npx tauri windows webview-installer` if missing)<br>• **Microsoft C++ Build Tools** / Visual Studio "Desktop development with C++" workload (provides the MSVC linker)<br>• Rust default target `x86_64-pc-windows-msvc` |
+| **macOS** | • **Xcode Command Line Tools**: `xcode-select --install`<br>• For universal binaries: `rustup target add aarch64-apple-darwin x86_64-apple-darwin` |
+| **Linux (Ubuntu/Debian)** | `sudo apt install libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev`, etc. (see the [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/)) |
 
-> 完整系统依赖清单以 [Tauri 2 官方「Prerequisites」](https://v2.tauri.app/start/prerequisites/) 为准。
+> Refer to the official [Tauri 2 Prerequisites](https://v2.tauri.app/start/prerequisites/) for the complete list.
 
 ---
 
-## 安装依赖
+## Install Dependencies
 
 ```bash
-# 1. 前端依赖（npm）
+# 1. Frontend dependencies (npm)
 npm install
 
-# 2. Rust 依赖会在首次构建时由 cargo 自动拉取（无需单独命令）
-#    如需提前检查：
+# 2. Rust dependencies are fetched automatically by cargo on first build
+#    (nothing to do). To verify ahead of time:
 cd src-tauri && cargo check && cd ..
 ```
 
 ---
 
-## 开发模式运行
+## Run in Development Mode
 
-### 方式 A：完整原生窗口热重载（推荐）
+### Option A: Full native window with hot reload (recommended)
 
 ```bash
 npm run tauri dev
 ```
 
-该命令会：
-1. 先执行 `beforeDevCommand`（`npm run dev`）启动 Vite 开发服务器（固定端口 **1420**，`strictPort`）；
-2. 编译并启动 Rust 后端，弹出原生 WebView 窗口；
-3. 前端代码改动即热更新，Rust 改动自动重新编译。
+This command will:
 
-### 方式 B：仅前端（无原生窗口，适合纯 UI 调试）
+1. Run `beforeDevCommand` (`npm run dev`) to start the Vite dev server (fixed port **1420**, `strictPort`);
+2. Compile and start the Rust backend, opening a native WebView window;
+3. Frontend changes hot-reload instantly; Rust changes trigger a rebuild automatically.
 
-```bash
-npm run dev        # 仅启动 Vite，浏览器打开 http://localhost:1420
-```
-
-### 类型检查 / 前端构建
+### Option B: Frontend only (no native window, pure UI debugging)
 
 ```bash
-npm run typecheck  # tsc --noEmit 类型检查
-npm run build      # vite build → 输出到 dist/
-npm run preview    # 本地预览构建产物
+npm run dev        # Vite only; open http://localhost:1420 in the browser
 ```
 
-> 调试模式下窗口数据目录指向本地 `webview-data/`（见 `src-tauri/src/lib.rs`），便于排查本地存储问题。
+### Type checking / frontend build
+
+```bash
+npm run typecheck  # tsc --noEmit type check
+npm run build      # vite build → dist/
+npm run preview    # preview the production build locally
+```
+
+> In debug mode the window data directory points to the local `webview-data/` folder (see `src-tauri/src/lib.rs`), which helps with local storage debugging.
 
 ---
 
-## 打包为安装程序
+## Packaging Installers
 
-构建流程：先 `npm run build`（Vite → `dist/`），再由 Tauri 将前端打包进原生二进制并生成对应平台安装包。
+Build flow: run `npm run build` first (Vite → `dist/`), then Tauri bundles the frontend into the native binary and produces the platform installers.
 
-### 按平台打包脚本（仓库已内置）
+### Per-platform scripts (built into the repo)
 
-| 命令 | 产物 | 输出位置 |
+| Command | Output | Location |
 |---|---|---|
-| `npm run build:win` | Windows **NSIS 安装包 (.exe)** + **MSI (.msi)** | `src-tauri/target/release/bundle/nsis/`、`.../msi/` |
-| `npm run build:mac` | macOS **.app** + **.dmg** | `src-tauri/target/release/bundle/macos/`、`.../dmg/` |
+| `npm run build:win` | Windows **NSIS installer (.exe)** + **MSI (.msi)** | `src-tauri/target/release/bundle/nsis/`, `.../msi/` |
+| `npm run build:mac` | macOS **.app** + **.dmg** | `src-tauri/target/release/bundle/macos/`, `.../dmg/` |
 | `npm run build:linux` | Linux **AppImage** + **.deb** + **.rpm** | `src-tauri/target/release/bundle/` |
-| `npm run build:desktop` | 全部启用的 bundle targets（见下） | 同上 |
+| `npm run build:desktop` | all enabled bundle targets (see below) | same as above |
 
-> 等价底层命令：`npx tauri build --bundles nsis,msi`（Windows）、`--bundles app,dmg`（macOS）等。
+> Equivalent low-level commands: `npx tauri build --bundles nsis,msi` (Windows), `--bundles app,dmg` (macOS), etc.
 
-### Bundle 配置（来自 `src-tauri/tauri.conf.json`）
+### Bundle configuration (from `src-tauri/tauri.conf.json`)
 
-- `productName`: `ShaderLab Pro`，`version`: `0.1.0`，`identifier`: `com.shaderlabpro.desktop`
+- `productName`: `ShaderLab Pro`, `version`: `0.1.0`, `identifier`: `com.shaderlabpro.desktop`
 - `bundle.targets`: `["nsis", "msi", "app", "dmg", "appimage", "deb", "rpm"]`
-- Windows NSIS 安装模式：`currentUser`（**当前用户安装，无需管理员权限**）
-- 图标：位于 `src-tauri/icons/`（已包含 png / icns / ico / Store 尺寸）
+- Windows NSIS install mode: `currentUser` (**per-user install, no admin rights required**)
+- Icons: `src-tauri/icons/` (png / icns / ico / Store sizes included)
 
-### 产物结构示例（Windows）
+### Example output layout (Windows)
 
 ```
 src-tauri/target/release/bundle/
 ├── nsis/
-│   └── ShaderLab Pro_0.1.0_x64-setup.exe   # NSIS 安装器
+│   └── ShaderLab Pro_0.1.0_x64-setup.exe   # NSIS installer
 └── msi/
-    └── ShaderLab Pro_0.1.0_x64_en-US.msi     # MSI 安装包
+    └── ShaderLab Pro_0.1.0_x64_en-US.msi     # MSI package
 ```
 
 ---
 
-## 自动更新（Updater）
+## Auto Update (Updater)
 
-`tauri.conf.json` 已开启 `bundle.createUpdaterArtifacts: true` 并配置了 `plugins.updater`：
+`tauri.conf.json` enables `bundle.createUpdaterArtifacts: true` and configures `plugins.updater`:
 
-- 更新元数据端点：`https://github.com/OWNER/REPO/releases/latest/download/latest.json`（**需替换 OWNER/REPO 为你的实际仓库**）
-- 更新器使用**非对称签名**，公钥已写入 `pubkey` 字段。
+- Update metadata endpoint: `https://github.com/yuxiaoyaoo/ShaderLab-Pro/releases/latest/download/latest.json`
+- The updater uses **asymmetric signatures**; the public key is embedded in the `pubkey` field.
 
-发布可更新版本前需：
+Before publishing an updatable release:
 
 ```bash
-# 1. 生成签名密钥对（首次）
+# 1. Generate the signing key pair (first time only)
 npx tauri signer generate -w ~/.tauri/shaderlab.key
 
-# 2. 将生成的公钥填入 tauri.conf.json 的 plugins.updater.pubkey
-# 3. 将私钥通过环境变量 TAURI_SIGNING_PRIVATE_KEY 提供给构建过程
+# 2. Put the public key into plugins.updater.pubkey in tauri.conf.json
+# 3. Provide the private key to the build via the TAURI_SIGNING_PRIVATE_KEY env var
 export TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/shaderlab.key)
 
-# 4. 构建会同时生成 .sig 签名文件与 latest.json
+# 4. The build also produces .sig signature files and latest.json
 npm run build:win
 ```
 
-> 若暂不需要自动更新，可将 `createUpdaterArtifacts` 设为 `false`，或保留但暂不部署更新服务器。
+> If you don't need auto-update yet, set `createUpdaterArtifacts` to `false`, or keep it enabled without deploying an update server.
 
 ---
 
-## 常见问题（Troubleshooting）
+## Troubleshooting
 
-| 现象 | 可能原因 | 解决 |
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| `tauri dev` 启动后白屏 / WebView 报错 | Windows 缺 WebView2 Runtime | 运行 `npx tauri windows webview-installer` 或手动安装 WebView2 |
-| Rust 编译报链接错误 `link.exe not found` | 未安装 MSVC 构建工具 | 安装 Visual Studio「使用 C++ 的桌面开发」工作负载 |
-| `npm run dev` 提示端口 1420 被占用 | 其他进程占用 | 关闭占用进程，或修改 `vite.config.ts` 的 `server.port` |
-| 更新器构建失败 `private key not found` | 未设置签名环境变量 | `export TAURI_SIGNING_PRIVATE_KEY=...` 后重试 |
-| macOS 公证/签名报错 | 未配置 Apple 开发者证书 | 在 `tauri.conf.json` 配置 `bundle.macOS` 签名项，或用 ad-hoc 签名仅本地测试 |
+| White screen / WebView error after `tauri dev` | Missing WebView2 Runtime on Windows | Run `npx tauri windows webview-installer` or install WebView2 manually |
+| Rust link error `link.exe not found` | MSVC build tools not installed | Install Visual Studio "Desktop development with C++" workload |
+| `npm run dev` reports port 1420 in use | Another process holds the port | Stop the process, or change `server.port` in `vite.config.ts` |
+| Updater build fails `private key not found` | Signing env var not set | `export TAURI_SIGNING_PRIVATE_KEY=...` and retry |
+| macOS notarization / signing error | Apple developer certificate not configured | Configure `bundle.macOS` signing in `tauri.conf.json`, or use ad-hoc signing for local testing |
 
 ---
 
-## 目录结构
+## Directory Structure
 
 ```
 ShaderLab Pro/
-├── index.html              # 前端入口 HTML
-├── package.json            # 前端依赖与脚本（dev/build/tauri/build:win...）
-├── vite.config.ts          # Vite + solid 插件配置（dev 端口 1420）
-├── tsconfig.json           # TypeScript 配置
-├── dist/                   # vite build 产物（被 Tauri 打包进二进制）
-├── src/                    # 前端源码（SolidJS + Monaco + 渲染/导出/项目模块）
+├── index.html              # Frontend entry HTML
+├── package.json            # Frontend deps and scripts (dev/build/tauri/build:win...)
+├── vite.config.ts          # Vite + solid plugin config (dev port 1420)
+├── tsconfig.json           # TypeScript config
+├── dist/                   # vite build output (bundled into the binary by Tauri)
+├── src/                    # Frontend source (SolidJS + Monaco + render/export/project modules)
 │   ├── index.tsx
 │   ├── App.tsx
 │   ├── components/  editor/  export/  project/  shadertoy/  updater/  agent/
 │   └── styles.css
-├── src-tauri/              # Rust 后端
-│   ├── tauri.conf.json     # Tauri / 打包 / 更新器 配置
-│   ├── Cargo.toml          # Rust 依赖
+├── src-tauri/              # Rust backend
+│   ├── tauri.conf.json     # Tauri / bundling / updater config
+│   ├── Cargo.toml          # Rust dependencies
 │   ├── build.rs
 │   ├── src/
-│   │   ├── lib.rs          # 应用入口、窗口与 IPC 命令
-│   │   ├── agent/  config/  ipc/   # 后端模块
+│   │   ├── lib.rs          # App entry, window and IPC commands
+│   │   ├── agent/  config/  ipc/   # backend modules
 │   │   └── main.rs
-│   ├── capabilities/       # Tauri 权限能力配置
-│   ├── icons/              # 应用图标（多尺寸）
-│   └── target/             # cargo 构建产物（gitignored）
-└── webview-data/           # 调试期 WebView 数据目录（gitignored）
+│   ├── capabilities/       # Tauri permission capabilities
+│   ├── icons/              # App icons (multi-size)
+│   └── target/             # cargo build artifacts (gitignored)
+└── webview-data/           # dev-time WebView data directory (gitignored)
 ```
 
 ---
 
-## 参考
+## References
 
-- [Tauri 2 官方文档](https://v2.tauri.app/)
-- [SolidJS 文档](https://www.solidjs.com/docs)
-- [Vite 文档](https://vite.dev/)
-- 产品需求与设计细节见仓库内 `ShaderLab Pro.md` 与 `Rig agent.md`
+- [Tauri 2 official docs](https://v2.tauri.app/)
+- [SolidJS docs](https://www.solidjs.com/docs)
+- [Vite docs](https://vite.dev/)
+
+---
+
+## Reporting Issues / Contributing
+
+- Report bugs or suggest features: [Open an Issue](https://github.com/yuxiaoyaoo/ShaderLab-Pro/issues/new/choose)
+- Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security reports: [SECURITY.md](SECURITY.md)
+- Release history: [CHANGELOG.md](CHANGELOG.md)
+
+---
+
+## License
+
+This project is open source under the **GNU AGPL v3.0** (see [LICENSE](LICENSE)).
+
+- You are free to use, modify, and redistribute (source or binaries), as long as **any modification or derivative work is open sourced under AGPL-3.0 or a compatible license**;
+- GLSL templates inside the app that are inspired by [Iñigo Quílez](https://iquilezles.org/)'s work remain under their original MIT license — see the copyright headers in the template files;
+- **Commercial licensing**: the author retains full copyright and commercial rights. The community may use the AGPL open-source edition for free; if your product or service needs to integrate or redistribute this project (or a modified version) in a closed-source / non-AGPL way, please contact the author for a commercial license (dual licensing).

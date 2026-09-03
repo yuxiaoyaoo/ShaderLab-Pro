@@ -1,7 +1,11 @@
 {
   "name": "shaderlab-pro",
-  "private": true,
   "version": "0.1.0",
+  "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuxiaoyaoo/ShaderLab-Pro.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

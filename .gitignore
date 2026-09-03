@@ -20,6 +20,17 @@ webview-data/
 # ---- 日志 ----
 *.log
 
+# ---- 内部工作产物（仅本地保留，不随开源仓库发布） ----
+.workbuddy/
+semantic-review/
+design/
+ui-redesign/
+docs/
+ShaderLab Pro.md
+Rig agent.md
+code.txt
+u9-light-initial.png
+
 # ---- 系统与编辑器 ----
 .DS_Store
 Thumbs.db

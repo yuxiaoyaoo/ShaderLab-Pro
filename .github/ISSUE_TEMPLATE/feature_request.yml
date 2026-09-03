@@ -1,0 +1,30 @@
+name: ✨ Feature request
+description: Suggest a new feature or an improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation / background
+      description: What problem are you trying to solve, and in what scenario?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Expected behavior, interaction, or visual design
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Other approaches you have considered (optional)
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched the issues and confirmed this is not a duplicate
+          required: true

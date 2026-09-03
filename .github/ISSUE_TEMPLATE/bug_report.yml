@@ -1,0 +1,74 @@
+name: 🐛 Bug report
+description: File a bug report to help us improve
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filling out this bug report! Please provide complete information to avoid back-and-forth.
+        If this is a **security vulnerability**, do NOT report it here — use [Private Vulnerability Reporting](https://github.com/yuxiaoyaoo/ShaderLab-Pro/security/advisories) instead.
+  - type: textarea
+    id: describe
+    attributes:
+      label: Description
+      description: What happened? What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal reproducible steps (1. Open… 2. Enter… 3. Click…)
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: shader
+    attributes:
+      label: Shader code (if applicable)
+      description: Paste the GLSL snippet that triggers the issue, and note the mode (code mode / pass graph mode)
+      render: glsl
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+  - type: markdown
+    attributes:
+      value: "## Environment"
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system
+      options:
+        - Windows 10
+        - Windows 11
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: e.g. 0.1.0 (see About / Settings)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots (optional)
+      description: DevTools console output, app logs, or UI screenshots. Do not include sensitive information.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched the issues and confirmed this is not a duplicate
+          required: true

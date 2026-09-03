@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/yuxiaoyaoo/ShaderLab-Pro/blob/master/CONTRIBUTING.md
+    about: Dev environment setup and verification requirements before submitting code
+  - name: Security vulnerability report
+    url: https://github.com/yuxiaoyaoo/ShaderLab-Pro/security/advisories
+    about: Report security vulnerabilities privately via GitHub Private Vulnerability Reporting
