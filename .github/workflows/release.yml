@@ -64,18 +64,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 更新签名私钥（发布产物签名用，见 src-tauri/README 说明）
+          # 更新签名私钥（发布产物签名用）——代码签名证书未配置时跳过，
+          # 请勿传入空的环境变量，否则 bundler 会尝试导入空证书而失败。
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Windows 代码签名（可选，未提供则跳过签名）
-          TAURI_WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.TAURI_WINDOWS_CERTIFICATE_THUMBPRINT }}
-          # macOS 签名与公证（可选，未提供则不签名/不公证）
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'ShaderLab Pro ${{ github.ref_name }}'
