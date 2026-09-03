@@ -1,4 +1,4 @@
-import { createEffect, on, onCleanup, onMount, type Component } from 'solid-js';
+import { Show, createEffect, createSignal, on, onCleanup, onMount, type Component } from 'solid-js';
 import type { PreviewResolution } from '../previewResolution';
 import {
   ShadertoyRuntime,
@@ -11,16 +11,24 @@ interface Props {
   resolution: () => PreviewResolution;
   onStats: (s: RuntimeStats) => void;
   onReady: (api: RuntimeApi) => void;
+  onAudioError?: (assetId: string) => void;
 }
 
 const PreviewPane: Component<Props> = (props) => {
   let canvas!: HTMLCanvasElement;
   let rt: ShadertoyRuntime | undefined;
   let resolutionFrame: number | undefined;
+  const [capturingKeys, setCapturingKeys] = createSignal(false);
+  const [audioFailed, setAudioFailed] = createSignal(false);
 
   onMount(() => {
     rt = new ShadertoyRuntime(canvas);
     rt.onStats = (s) => props.onStats(s);
+    rt.onKeyboardCapture = (on) => setCapturingKeys(on);
+    rt.onAudioError = (assetId) => {
+      setAudioFailed(true);
+      props.onAudioError?.(assetId);
+    };
     rt.play();
     props.onReady(rt);
   });
@@ -71,6 +79,16 @@ const PreviewPane: Component<Props> = (props) => {
       style={resolutionStyle()}
     >
       <canvas ref={canvas} />
+      <div class="kb-capture-badge" classList={{ on: capturingKeys() }}>
+        <i />
+        键盘采集中
+      </div>
+      <Show when={audioFailed()}>
+        <div class="kb-capture-badge on audio-error">
+          <i />
+          音频解码失败
+        </div>
+      </Show>
     </div>
   );
 };

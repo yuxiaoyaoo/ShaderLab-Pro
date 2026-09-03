@@ -1,4 +1,5 @@
 import { ProductError } from '../productMessage';
+import { MAX_ASSET_BYTES } from './contentHash';
 import { deterministicHash, stableStringify } from './compiler/hash';
 import type { GraphDocument } from './model';
 
@@ -18,10 +19,23 @@ export interface TextureAsset {
   contentHash: string;
 }
 
+export type AudioMediaType = 'audio/mpeg' | 'audio/ogg' | 'audio/wav' | 'audio/mp4' | 'audio/flac';
+
+/** Music-file input for iChannel. No decode at import time — the runtime decodes on play. */
+export interface AudioAsset {
+  id: string;
+  name: string;
+  file: string;
+  mediaType: AudioMediaType;
+  bytes: number;
+  contentHash: string;
+}
+
 export interface AssetManifest {
   format: typeof ASSET_MANIFEST_FORMAT;
   version: typeof ASSET_MANIFEST_VERSION;
   assets: TextureAsset[];
+  audio?: AudioAsset[];
 }
 
 export interface TextureCompileBinding {
@@ -39,13 +53,15 @@ export interface ResolvedTextureEnvironment {
 export const MAX_TEXTURE_ASSETS = 64;
 export const MAX_TEXTURE_DIMENSION = 8192;
 export const MAX_PROJECT_TEXTURE_PIXELS = 64 * 1024 * 1024;
+export const MAX_AUDIO_ASSETS = 8;
 
 const ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/;
 const HASH = /^[a-f0-9]{64}$/i;
 const MEDIA = new Set<TextureAsset['mediaType']>(['image/png', 'image/jpeg', 'image/webp']);
+const AUDIO_MEDIA = new Set<AudioMediaType>(['audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/mp4', 'audio/flac']);
 
 export function createAssetManifest(): AssetManifest {
-  return { format: ASSET_MANIFEST_FORMAT, version: ASSET_MANIFEST_VERSION, assets: [] };
+  return { format: ASSET_MANIFEST_FORMAT, version: ASSET_MANIFEST_VERSION, assets: [], audio: [] };
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -98,7 +114,37 @@ export function normalizeAssetManifest(value: unknown): AssetManifest {
       contentHash: asset.contentHash.toLowerCase(),
     };
   }).sort((a, b) => a.id.localeCompare(b.id));
-  return { format: ASSET_MANIFEST_FORMAT, version: ASSET_MANIFEST_VERSION, assets };
+  const audio: AudioAsset[] = [];
+  if (input.audio !== undefined) {
+    if (!Array.isArray(input.audio)) throw new Error('audio 列表无效');
+    if (input.audio.length > MAX_AUDIO_ASSETS) throw new Error(`Audio 数量不能超过 ${MAX_AUDIO_ASSETS}`);
+    input.audio.forEach((raw, index) => {
+      const asset = record(raw);
+      const id = asset?.id;
+      const file = asset?.file;
+      const mediaType = asset?.mediaType;
+      const bytes = Number(asset?.bytes);
+      if (!asset || typeof id !== 'string' || !ID.test(id)) throw new Error(`Audio[${index}] id 无效`);
+      if (ids.has(id)) throw new Error(`Asset id 重复：${id}`);
+      if (!safeRelativeAssetPath(file)) throw new Error(`Audio ${id} file 必须是 assets/ 下的安全相对路径`);
+      if (files.has(file.toLowerCase())) throw new Error(`Asset file 重复：${file}`);
+      if (typeof mediaType !== 'string' || !AUDIO_MEDIA.has(mediaType as AudioMediaType)) throw new Error(`Audio ${id} mediaType 无效`);
+      if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_ASSET_BYTES) throw new Error(`Audio ${id} 大小无效`);
+      if (typeof asset.contentHash !== 'string' || !HASH.test(asset.contentHash)) throw new Error(`Audio ${id} contentHash 无效`);
+      ids.add(id);
+      files.add(file.toLowerCase());
+      audio.push({
+        id,
+        name: typeof asset.name === 'string' && asset.name.trim() ? asset.name.trim().slice(0, 256) : id,
+        file,
+        mediaType: mediaType as AudioMediaType,
+        bytes,
+        contentHash: asset.contentHash.toLowerCase(),
+      });
+    });
+    audio.sort((a, b) => a.id.localeCompare(b.id));
+  }
+  return { format: ASSET_MANIFEST_FORMAT, version: ASSET_MANIFEST_VERSION, assets, audio };
 }
 
 export function parseAssetManifest(text: string): AssetManifest {

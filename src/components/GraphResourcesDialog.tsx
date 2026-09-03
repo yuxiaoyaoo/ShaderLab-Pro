@@ -2,7 +2,7 @@ import { For, Show, createSignal, type Component } from 'solid-js';
 import { normalizeProductMessage, ProductError, type ProductMessageDescriptor } from '../productMessage';
 import ProductMessageView from './ProductMessageView';
 import { t } from '../i18n';
-import type { AssetManifest, TextureColorSpace } from '../graph/assets';
+import type { AssetManifest, AudioAsset, TextureColorSpace } from '../graph/assets';
 import { GRAPH_PARAMETER_VALUE_TYPES, graphTypeComponents, type GraphParameterValue, type GraphValueType } from '../graph/model';
 import type { CustomFunctionDefinition, GraphLibraryDocument, LibrarySocket } from '../graph/library';
 import { useModalFocus } from './modalFocus';
@@ -13,8 +13,10 @@ interface Props {
   library: GraphLibraryDocument;
   onClose: () => void;
   onImportTexture: () => void;
+  onImportAudio: () => void;
   onSetTextureColorSpace: (id: string, colorSpace: TextureColorSpace) => void;
   onRemoveTexture: (id: string) => void;
+  onRemoveAudio: (id: string) => void;
   onAddStarterGroup: () => void;
   onRemoveGroup: (id: string, version: number) => void;
   onAddFunction: (definition: CustomFunctionDefinition) => ProductMessageDescriptor | null;
@@ -122,6 +124,16 @@ const GraphResourcesDialog: Component<Props> = (props) => {
                 <div class="graph-resource-meta"><strong>{asset.name}</strong><small>{asset.id} · {asset.width}×{asset.height}</small><code title={asset.contentHash}>sha256:{asset.contentHash.slice(0, 12)}…</code></div>
                 <label class="graph-resource-inline">{t('graph.resources.colorSpace')}<select value={asset.colorSpace} onChange={(event) => props.onSetTextureColorSpace(asset.id, event.currentTarget.value as TextureColorSpace)}><option value="srgb">{t('graph.resources.colorSpace.srgb')}</option><option value="linear">{t('graph.resources.colorSpace.linear')}</option></select></label>
                 <button class="btn mini danger" onClick={() => props.onRemoveTexture(asset.id)}>{t('common.remove')}</button>
+              </div>}
+            </For>
+          </section>
+          <section>
+            <div class="graph-resource-heading"><h3>{t('graph.resources.audioAssets')}</h3><button class="btn primary" onClick={props.onImportAudio}>{t('graph.resources.importAudio')}</button></div>
+            <p class="graph-muted">{t('graph.resources.audioHint')}</p>
+            <For each={props.manifest.audio ?? []} fallback={<p class="graph-empty">{t('graph.resources.noAudio')}</p>}>
+              {(asset: AudioAsset) => <div class="graph-resource-row">
+                <div class="graph-resource-meta"><strong>{asset.name}</strong><small>{asset.id} · {asset.mediaType}</small><code title={asset.contentHash}>sha256:{asset.contentHash.slice(0, 12)}…</code></div>
+                <button class="btn mini danger" onClick={() => props.onRemoveAudio(asset.id)}>{t('common.remove')}</button>
               </div>}
             </For>
           </section>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>iChannel 下拉选项配色对照</title>
+<style>
+  :root {
+    --bg0: #070a18; --panel: #141a38; --line: rgba(255,255,255,.075);
+    --line-strong: rgba(255,255,255,.16); --txt: #edf0fb; --txt2: #a6aed0;
+    --input-bg: rgba(148,163,216,.09);
+    --select-popup-bg: #141a38; --select-popup-txt: #edf0fb; --select-popup-txt-dim: #8791b8;
+    color-scheme: dark;
+  }
+  :root[data-theme='light'] {
+    --bg0: #c6cbe9; --panel: #ffffff; --line: #e3e7f4; --line-strong: #d0d7ee;
+    --txt: #232a4d; --txt2: #5a6390; --input-bg: #f0f3fc;
+    --select-popup-bg: #ffffff; --select-popup-txt: #232a4d; --select-popup-txt-dim: #70799f;
+    color-scheme: light;
+  }
+  body { margin: 0; padding: 28px 32px; background: var(--bg0); color: var(--txt);
+         font: 13px/1.6 'Segoe UI', system-ui, sans-serif; }
+  h1 { font-size: 15px; font-weight: 500; margin: 0 0 4px; }
+  p.hint { margin: 0 0 20px; color: var(--txt2); font-size: 12px; }
+  .grid { display: flex; gap: 16px; flex-wrap: wrap; }
+  .card { flex: 1 1 300px; padding: 16px; border: 1px solid var(--line-strong);
+          border-radius: 12px; background: var(--panel); }
+  .card h2 { font-size: 13px; font-weight: 500; margin: 0 0 2px; }
+  .card small { display: block; color: var(--txt2); font-size: 11.5px; margin-bottom: 14px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .ch { display: flex; align-items: center; gap: 3px; font-size: 10.5px; color: var(--txt2); }
+  .ch select { height: 20px; max-width: 120px; border: 1px solid var(--line); border-radius: 4px;
+               background: var(--input-bg); color: var(--txt); font-size: 11px; outline: none; }
+  .card.bad .ch select { }
+  .card.bad .ch select:hover { border-color: var(--line-strong); }
+  .card.good .ch select option { background: var(--select-popup-bg); color: var(--select-popup-txt); }
+  .card.good .ch select option:disabled { color: var(--select-popup-txt-dim); }
+  .card.good .ch select:hover, .card.good .ch select:focus-visible { border-color: #4d6ef5; }
+  .verdict { margin-top: 14px; font-size: 12px; }
+  .bad .verdict { color: #ff6b66; }
+  .good .verdict { color: #3ddc97; }
+  button { margin-bottom: 16px; padding: 5px 12px; border: 1px solid var(--line-strong);
+           border-radius: 6px; background: var(--input-bg); color: var(--txt); cursor: pointer; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>iChannel 下拉选项配色对照</h1>
+  <p class="hint">展开两边的下拉，比较弹出项的底色与文字色。左列复现修复前的行为，右列是修复后的全局兜底。</p>
+  <button id="toggle">切换深浅主题</button>
+  <div class="grid">
+    <section class="card bad">
+      <h2>修复前</h2>
+      <small>option 不设色，继承半透明的 --input-bg</small>
+      <div class="row">
+        <label class="ch"><span>ch0</span>
+          <select>
+            <option value="">—</option><option>Buffer A</option><option>noise.png</option>
+            <option>bgm.mp3</option><option>keyboard</option><option value="missing" disabled>缺失</option>
+          </select>
+        </label>
+      </div>
+      <div class="verdict">浅底 + 浅字，选项几乎不可见</div>
+    </section>
+    <section class="card good">
+      <h2>修复后</h2>
+      <small>option 显式不透明 --select-popup-bg / --select-popup-txt</small>
+      <div class="row">
+        <label class="ch"><span>ch0</span>
+          <select>
+            <option value="">—</option><option>Buffer A</option><option>noise.png</option>
+            <option>bgm.mp3</option><option>keyboard</option><option value="missing" disabled>缺失</option>
+          </select>
+        </label>
+      </div>
+      <div class="verdict">深底 + 浅字，禁用项用 --select-popup-txt-dim</div>
+    </section>
+  </div>
+<script>
+  document.getElementById('toggle').addEventListener('click', () => {
+    const root = document.documentElement;
+    root.dataset.theme = root.dataset.theme === 'light' ? 'dark' : 'light';
+  });
+</script>
+</body>
+</html>

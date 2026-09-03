@@ -50,7 +50,7 @@ const BUILTINS: Record<Extract<IrExpr, { kind: 'builtin' }>['name'], string> = {
   time: 'iTime',
   resolution: 'iResolution.xy',
   fragCoord: 'fragCoord',
-  frame: 'iFrame',
+  frame: 'float(iFrame)',
   mouse: 'iMouse',
   sampleTime: 'time',
   sampleIndex: 'float(samp)',

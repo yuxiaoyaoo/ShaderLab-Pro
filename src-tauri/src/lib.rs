@@ -669,6 +669,129 @@ fn delete_file(path: String) -> Result<(), String> {
     }
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryEntry {
+    pub dir: String,
+    pub name: String,
+    pub modified: String,
+    pub has_thumbnail: bool,
+}
+
+/// 作品库根目录：app_data_dir()/Projects，保证目录存在。
+#[tauri::command]
+fn library_root(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("{e}"))?
+        .join("Projects");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {:?}", e, dir))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// 画廊列表直接扫描 Projects/*/shaderlab.json（无独立索引，永不与磁盘脱节），按 modified 倒序。
+#[tauri::command]
+fn list_library(root: String) -> Result<Vec<LibraryEntry>, String> {
+    let mut entries = Vec::new();
+    let readers = match std::fs::read_dir(&root) {
+        Ok(readers) => readers,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
+        Err(e) => return Err(format!("{}: {}", e, root)),
+    };
+    for item in readers.flatten() {
+        let path = item.path();
+        if !path.is_dir() || !path.join("shaderlab.json").is_file() {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(path.join("shaderlab.json")) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        let name = value
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        entries.push(LibraryEntry {
+            dir: path.to_string_lossy().to_string(),
+            name,
+            modified: value
+                .get("modified")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            has_thumbnail: path.join("thumbnail.png").is_file(),
+        });
+    }
+    entries.sort_by(|a, b| b.modified.cmp(&a.modified));
+    Ok(entries)
+}
+
+/// 递归删除作品库项目目录。护栏：路径必须位于 root 下且包含 shaderlab.json。
+#[tauri::command]
+fn delete_dir(root: String, path: String) -> Result<(), String> {
+    let canonical_root = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|e| format!("{}: {:?}", e, root))?;
+    let canonical_path = PathBuf::from(&path)
+        .canonicalize()
+        .map_err(|e| format!("{}: {:?}", e, path))?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(format!("path outside library root: {}", path));
+    }
+    if !canonical_path.join("shaderlab.json").is_file() {
+        return Err(format!("not a shaderlab project: {}", path));
+    }
+    std::fs::remove_dir_all(&path).map_err(|e| format!("{}: {}", e, path))
+}
+
+/// 在系统文件管理器中定位项目文件夹（Windows 资源管理器 / macOS 访达 / Linux 文件管理器）。
+#[tauri::command]
+fn reveal_in_folder(path: String) -> Result<(), String> {
+    if !Path::new(&path).exists() {
+        return Err(format!("not found: {}", path));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let win_path = path.replace('/', "\\");
+        std::process::Command::new("explorer.exe")
+            .args(["/select,", &win_path])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("{e}"))?;
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| format!("{e}"))?;
+        return Ok(());
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let parent = Path::new(&path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(&path));
+        std::process::Command::new("xdg-open")
+            .arg(&parent)
+            .spawn()
+            .map_err(|e| format!("{e}"))?;
+        return Ok(());
+    }
+}
+
 #[tauri::command]
 fn restart_app(app: tauri::AppHandle) {
     app.restart();
@@ -689,6 +812,10 @@ pub fn run() {
             write_binary_file,
             create_dir,
             delete_file,
+            library_root,
+            list_library,
+            delete_dir,
+            reveal_in_folder,
             restart_app,
             ipc::chat::chat,
             ipc::chat::chat_stream,

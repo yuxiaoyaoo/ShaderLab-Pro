@@ -4,7 +4,7 @@ import { BUFFER_IDS, sourcesWithDefaults, type ProjectSources, type ShaderlabPro
 import { buildRuntimeUniformContract } from './uniformContract';
 import type { UniformDecl, UniformValue } from './uniforms';
 import type { GraphPassId } from '../graph/model';
-import type { RuntimeChannelCfg, RuntimeTextureAsset, RuntimeSetup } from './runtime';
+import type { RuntimeAudioAsset, RuntimeChannelCfg, RuntimeTextureAsset, RuntimeSetup } from './runtime';
 
 /** Runtime/export-facing sources. M1 can replace individual Code sources with generated Graph GLSL. */
 export type EffectiveSources = ProjectSources;
@@ -25,6 +25,7 @@ export function buildRuntimeSetup(
   timingPlan?: ResolvedPassGraph,
   graphTextureChannels: Partial<Record<GraphPassId, ReadonlyArray<Extract<RuntimeChannelCfg, { type: 'texture' }>>>> = {},
   textures: RuntimeTextureAsset[] = [],
+  audio: RuntimeAudioAsset[] = [],
 ): RuntimeSetup {
   const fallbackPlan = timingPlan ?? resolvePassGraph(passGraphFromLegacy(meta), meta).resolved;
   const resolved = fallbackPlan ?? {
@@ -56,14 +57,28 @@ export function buildRuntimeSetup(
     // requested domain and rejects only that domain instead of silently binding dummy data.
     return [...legacy, ...(graphTextureChannels[pass] ?? [])];
   };
+  const keyboardChannels = (pass: GraphPassId): Extract<RuntimeChannelCfg, { type: 'keyboard' }>[] =>
+    (meta.passes[pass].authoring?.kind === 'graph' ? [] : (meta.passes[pass].channels ?? []))
+      .filter((channel) => channel.type === 'keyboard')
+      .map((channel) => ({ index: channel.index, type: 'keyboard' as const }));
+  const audioChannels = (pass: GraphPassId): Extract<RuntimeChannelCfg, { type: 'audio' }>[] =>
+    (meta.passes[pass].authoring?.kind === 'graph' ? [] : (meta.passes[pass].channels ?? []))
+      .filter((channel) => channel.type === 'audio')
+      .map((channel) => ({
+        index: channel.index,
+        type: 'audio' as const,
+        src: channel.src,
+        filter: channel.filter,
+        wrap: channel.wrap,
+      }));
 
   const options: RuntimeSetup['options'] = {
-    image: { channels: [...bufferChannels('image'), ...textureChannels('image')] },
+    image: { channels: [...bufferChannels('image'), ...textureChannels('image'), ...keyboardChannels('image'), ...audioChannels('image')] },
   };
   for (const buffer of BUFFER_IDS) {
     const config = meta.passes[buffer];
     if (!config?.enabled) continue;
-    options[buffer] = { channels: [...bufferChannels(buffer), ...textureChannels(buffer)] };
+    options[buffer] = { channels: [...bufferChannels(buffer), ...textureChannels(buffer), ...keyboardChannels(buffer), ...audioChannels(buffer)] };
   }
   if (meta.passes.sound.enabled) options.sound = { channels: textureChannels('sound') };
 
@@ -80,6 +95,7 @@ export function buildRuntimeSetup(
     options,
     timingPlan: { bufferOrder: resolved.bufferOrder, revision: resolved.revision },
     textures,
+    audio,
     uniforms: buildRuntimeUniformContract(
       uniformDecls.filter((decl) => decl.pass !== 'sound'),
       graphUniforms.filter((uniform) => uniform.pass !== 'sound'),

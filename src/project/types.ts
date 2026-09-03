@@ -7,7 +7,7 @@ export type PassId = 'common' | 'image' | 'bufferA' | 'bufferB' | 'bufferC' | 'b
 
 export interface PassChannelCfg {
   index: number;
-  type: 'texture' | 'buffer' | 'keyboard' | 'volume';
+  type: 'texture' | 'buffer' | 'keyboard' | 'volume' | 'audio';
   src: string;
   filter: 'linear' | 'nearest';
   wrap: 'repeat' | 'clamp';

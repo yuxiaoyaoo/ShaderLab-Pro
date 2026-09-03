@@ -59,6 +59,17 @@ export type RuntimeChannelCfg =
       src: string;
       filter: 'linear' | 'nearest';
       wrap: 'repeat' | 'clamp';
+    }
+  | {
+      index: number;
+      type: 'keyboard';
+    }
+  | {
+      index: number;
+      type: 'audio';
+      src: string;
+      filter: 'linear' | 'nearest';
+      wrap: 'repeat' | 'clamp';
     };
 
 export interface RuntimeTextureAsset {
@@ -67,6 +78,12 @@ export interface RuntimeTextureAsset {
   height: number;
   pixels?: Uint8Array | Uint8ClampedArray;
   source?: TexImageSource;
+}
+
+/** Music-file input for an iChannel: 512x2 R8 texture (row 0 = FFT, row 1 = waveform). */
+export interface RuntimeAudioAsset {
+  id: string;
+  url: string;
 }
 
 export interface RuntimePassOpts {
@@ -92,6 +109,8 @@ export interface RuntimeSetup {
   options?: Partial<Record<RuntimePassId, RuntimePassOpts>>;
   timingPlan?: RuntimeTimingPlan;
   textures?: RuntimeTextureAsset[];
+  /** Music-file inputs referenced by 'audio' channels. Playback state lives in the runtime. */
+  audio?: RuntimeAudioAsset[];
   uniforms?: RuntimeUniform[];
   /** Sound owns an independent uniform snapshot. Falls back to uniforms for legacy callers. */
   soundUniforms?: RuntimeUniform[];
@@ -150,6 +169,8 @@ export interface RuntimeApi {
   isRunning(): boolean;
   setSpeed(s: number): void;
   seek(t: number): void;
+  /** 当前预览时间（秒）。 */
+  getTime?(): number;
   /** Legacy development bridge. UI preview sizing uses setPreviewResolution. */
   setResolutionScale(s: number): void;
   setPreviewResolution(resolution: PreviewResolution): void;
@@ -163,6 +184,13 @@ export interface RuntimeApi {
   ): Promise<Blob | null>;
   endCapture(): void;
   setUniform(name: string, value: UniformValue): void;
+  /** Plays a music-file input bound to an 'audio' channel. No-op when the asset has no graph. */
+  audioPlay?(assetId: string): void;
+  audioPause?(assetId: string): void;
+  audioSeekTo?(assetId: string, t: number): void;
+  audioInfo?(
+    assetId: string,
+  ): { playing: boolean; currentTime: number; duration: number; failed: boolean } | null;
   renderAudio(
     durationSec: number,
     sampleRate?: number,
@@ -189,11 +217,12 @@ void main() {
 const FRAG_HEADER = [
   '#version 300 es',
   'precision highp float;',
+  '#define HW_PERFORMANCE 0',
   '',
   'uniform vec3 iResolution;',
   'uniform float iTime;',
   'uniform float iTimeDelta;',
-  'uniform float iFrame;',
+  'uniform int iFrame;',
   'uniform vec4 iMouse;',
   'uniform vec4 iDate;',
   'uniform float iSampleRate;',
@@ -256,6 +285,17 @@ interface TextureState {
   height: number;
 }
 
+/** Per-asset audio playback + analysis graph. The 512x2 data texture is uploaded each frame. */
+interface AudioGraph {
+  el: HTMLAudioElement;
+  analyser: AnalyserNode;
+  freq: Uint8Array;
+  wave: Uint8Array;
+  data: Uint8Array;
+  tex: WebGLTexture | null;
+  failed: boolean;
+}
+
 type TextureChannelCfg = Extract<RuntimeChannelCfg, { type: 'texture' }>;
 type VisualOptions = Partial<Record<RenderPassId, RuntimePassOpts>>;
 
@@ -264,6 +304,7 @@ interface VisualCompileCandidate {
   buffers: Map<BufferPassId, BufState>;
   previewBuffers: Map<BufferPassId, BufState> | null;
   textures: Map<string, TextureState>;
+  audio: RuntimeAudioAsset[];
   options: VisualOptions;
   timingPlan: RuntimeTimingPlan;
   uniforms: Map<string, RuntimeUniform>;
@@ -366,6 +407,17 @@ export class ShadertoyRuntime implements RuntimeApi {
   // Mouse coordinates are stored normalized so exports at another resolution
   // receive the same logical pointer position as the preview.
   private mouse = { x: 0, y: 0, z: 0, w: 0 };
+  // Shadertoy-compatible keyboard state: a 256x2 R8 data texture.
+  // Row 0 = key pressed this frame (pulse, cleared at frame end); row 1 = key currently held.
+  private keyboardData = new Uint8Array(512);
+  private keyboardTex: WebGLTexture | null = null;
+  private keyboardActive = false;
+  private keyboardHover = false;
+  private keyboardDetach: (() => void) | null = null;
+  // Shadertoy-compatible audio input: per-asset <audio> + AnalyserNode feeding a
+  // 512x2 R8 texture. Row 0 = FFT (getByteFrequencyData), row 1 = waveform (getByteTimeDomainData).
+  private audioGraphs = new Map<string, AudioGraph>();
+  private audioCtx: AudioContext | null = null;
   private previewResolution: PreviewResolution = { mode: 'auto' };
   private legacyResolutionScale: number | null = null;
   private captureSize: CaptureSize | null = null;
@@ -391,6 +443,10 @@ export class ShadertoyRuntime implements RuntimeApi {
   private disposed = false;
 
   onStats: ((s: RuntimeStats) => void) | null = null;
+  /** Fired when hover-driven keyboard capture arms or disarms. Armed only when the compiled setup declares a keyboard channel. */
+  onKeyboardCapture: ((capturing: boolean) => void) | null = null;
+  /** Fired once per audio asset when decoding/playback fails; the channel falls back to silence. */
+  onAudioError: ((assetId: string) => void) | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', {
@@ -416,6 +472,7 @@ export class ShadertoyRuntime implements RuntimeApi {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     this.attachMouse();
+    this.attachKeyboard();
 
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas);
@@ -672,6 +729,237 @@ export class ShadertoyRuntime implements RuntimeApi {
     });
   }
 
+  private attachKeyboard() {
+    const c = this.canvas;
+    const capture = (e: KeyboardEvent, down: boolean) => {
+      if (!this.keyboardActive || !this.keyboardHover || this.disposed) return;
+      const code = e.keyCode;
+      if (!Number.isInteger(code) || code < 0 || code > 255) return;
+      if (down) {
+        if (e.repeat) return;
+        this.keyboardData[code] = 255;
+        this.keyboardData[256 + code] = 255;
+      } else {
+        this.keyboardData[256 + code] = 0;
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => capture(e, true);
+    const onKeyUp = (e: KeyboardEvent) => capture(e, false);
+    const releaseHeld = () => {
+      for (let i = 256; i < 512; i++) this.keyboardData[i] = 0;
+    };
+    const onEnter = () => {
+      this.keyboardHover = true;
+      this.emitKeyboardCapture();
+    };
+    const onLeave = () => {
+      if (!this.keyboardHover) return;
+      this.keyboardHover = false;
+      releaseHeld();
+      this.emitKeyboardCapture();
+    };
+    const onBlur = () => {
+      releaseHeld();
+      this.keyboardData.fill(0, 0, 256);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    c.addEventListener('pointerenter', onEnter);
+    c.addEventListener('pointerleave', onLeave);
+    this.keyboardDetach = () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      c.removeEventListener('pointerenter', onEnter);
+      c.removeEventListener('pointerleave', onLeave);
+    };
+  }
+
+  private emitKeyboardCapture() {
+    if (this.keyboardActive) this.onKeyboardCapture?.(this.keyboardHover);
+  }
+
+  private applyKeyboardActivity(options: VisualOptions) {
+    const active = Object.values(options).some((opts) => (opts.channels ?? []).some((channel) => channel.type === 'keyboard'));
+    const changed = active !== this.keyboardActive;
+    this.keyboardActive = active;
+    if (active) this.ensureKeyboardTexture();
+    if (changed) this.emitKeyboardCapture();
+  }
+
+  private ensureKeyboardTexture() {
+    if (this.keyboardTex || this.disposed) return;
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    if (!tex) throw new ProductError({ code: 'runtime.texture-upload-failed' });
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 256, 2, 0, gl.RED, gl.UNSIGNED_BYTE, this.keyboardData);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.keyboardTex = tex;
+  }
+
+  private uploadKeyboardState() {
+    if (!this.keyboardTex) return;
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.keyboardTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 2, gl.RED, gl.UNSIGNED_BYTE, this.keyboardData);
+  }
+
+  /** Syncs audio graphs with the compiled setup: creates missing, tears down unreferenced. */
+  private applyAudioAssets(assets: readonly RuntimeAudioAsset[], options: VisualOptions) {
+    const wanted = new Map<string, RuntimeAudioAsset>();
+    for (const opts of Object.values(options)) {
+      for (const channel of opts?.channels ?? []) {
+        if (channel.type !== 'audio') continue;
+        const asset = assets.find((entry) => entry.id === channel.src);
+        if (asset) wanted.set(asset.id, asset);
+      }
+    }
+    for (const id of [...this.audioGraphs.keys()]) {
+      if (!wanted.has(id)) this.destroyAudioGraph(id);
+    }
+    for (const asset of wanted.values()) {
+      let graph = this.audioGraphs.get(asset.id);
+      if (!graph) {
+        try {
+          this.audioCtx ??= new AudioContext();
+          const el = new Audio(asset.url);
+          el.loop = true;
+          el.preload = 'auto';
+          const source = this.audioCtx.createMediaElementSource(el);
+          const analyser = this.audioCtx.createAnalyser();
+          analyser.fftSize = 1024;
+          analyser.smoothingTimeConstant = 0.8;
+          source.connect(analyser);
+          analyser.connect(this.audioCtx.destination);
+          graph = {
+            el,
+            analyser,
+            freq: new Uint8Array(analyser.frequencyBinCount),
+            wave: new Uint8Array(analyser.fftSize),
+            data: new Uint8Array(1024),
+            tex: this.ensureAudioTexture(asset.id),
+            failed: false,
+          };
+          graph.el.addEventListener('error', () => {
+            if (graph && !graph.failed) {
+              graph.failed = true;
+              this.onAudioError?.(asset.id);
+            }
+          });
+          this.audioGraphs.set(asset.id, graph);
+          el.load();
+        } catch (error) {
+          this.onAudioError?.(asset.id);
+          rawError(error);
+        }
+      } else if (graph.el.src !== asset.url) {
+        graph.el.src = asset.url;
+        graph.failed = false;
+        graph.el.load();
+      }
+    }
+  }
+
+  private ensureAudioTexture(id: string): WebGLTexture | null {
+    if (this.disposed) return null;
+    const existing = this.audioGraphs.get(id)?.tex;
+    if (existing) return existing;
+    const gl = this.gl;
+    const tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 512, 2, 0, gl.RED, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  }
+
+  /** Per-frame audio texture refresh. Paused/failed graphs fall back to silence (row1=128). */
+  private updateAudioTextures() {
+    if (this.audioGraphs.size === 0) return;
+    const gl = this.gl;
+    for (const graph of this.audioGraphs.values()) {
+      if (graph.failed || graph.el.paused || graph.el.ended) {
+        graph.data.fill(0, 0, 512);
+        graph.data.fill(128, 512, 1024);
+      } else {
+        graph.analyser.getByteFrequencyData(graph.freq);
+        graph.analyser.getByteTimeDomainData(graph.wave);
+        graph.data.set(graph.freq.subarray(0, 512), 0);
+        for (let i = 0; i < 512; i++) graph.data[512 + i] = graph.wave[i * 2];
+      }
+      if (!graph.tex) continue;
+      gl.bindTexture(gl.TEXTURE_2D, graph.tex);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 512, 2, gl.RED, gl.UNSIGNED_BYTE, graph.data);
+    }
+  }
+
+  private destroyAudioGraph(id: string) {
+    const graph = this.audioGraphs.get(id);
+    if (!graph) return;
+    this.audioGraphs.delete(id);
+    try {
+      graph.el.pause();
+      graph.el.removeAttribute('src');
+      graph.el.load();
+    } catch {
+      // element already gone
+    }
+    const gl = this.gl;
+    if (graph.tex) {
+      gl.deleteTexture(graph.tex);
+      graph.tex = null;
+    }
+  }
+
+  private destroyAllAudioGraphs() {
+    for (const id of [...this.audioGraphs.keys()]) this.destroyAudioGraph(id);
+    if (this.audioCtx) {
+      this.audioCtx.close().catch(() => undefined);
+      this.audioCtx = null;
+    }
+  }
+
+  audioPlay(assetId: string): void {
+    const graph = this.audioGraphs.get(assetId);
+    if (!graph || graph.failed) return;
+    this.audioCtx?.resume().catch(() => undefined);
+    graph.el.play().catch(() => {
+      graph.failed = true;
+      this.onAudioError?.(assetId);
+    });
+  }
+
+  audioPause(assetId: string): void {
+    this.audioGraphs.get(assetId)?.el.pause();
+  }
+
+  audioSeekTo(assetId: string, t: number): void {
+    const graph = this.audioGraphs.get(assetId);
+    if (!graph) return;
+    const duration = graph.el.duration;
+    if (Number.isFinite(duration)) {
+      graph.el.currentTime = Math.max(0, Math.min(t, duration));
+    }
+  }
+
+  audioInfo(assetId: string): { playing: boolean; currentTime: number; duration: number; failed: boolean } | null {
+    const graph = this.audioGraphs.get(assetId);
+    if (!graph) return null;
+    return {
+      playing: !graph.el.paused && !graph.el.ended,
+      currentTime: graph.el.currentTime,
+      duration: Number.isFinite(graph.el.duration) ? graph.el.duration : 0,
+      failed: graph.failed,
+    };
+  }
+
   setUniform(name: string, value: UniformValue): void {
     const visual = this.uniformVals.get(name);
     if (visual) this.uniformVals.set(name, { ...visual, value: cloneUniformValue(value) });
@@ -789,20 +1077,27 @@ export class ShadertoyRuntime implements RuntimeApi {
           const validCommon = Number.isInteger(channel.index)
             && channel.index >= 0
             && channel.index <= 3
-            && (channel.filter === 'linear' || channel.filter === 'nearest')
-            && (channel.wrap === 'repeat' || channel.wrap === 'clamp')
             && !usedSlots.has(channel.index);
+          const validSampling = channel.type === 'keyboard'
+            || ((channel.filter === 'linear' || channel.filter === 'nearest')
+              && (channel.wrap === 'repeat' || channel.wrap === 'clamp'));
           usedSlots.add(channel.index);
           let validSource = false;
           if (channel.type === 'buffer') {
             validSource = (channel.timing === 'current' || channel.timing === 'previous')
               && enabledBuffers.includes(channel.src);
           } else if (channel.type === 'texture') {
+            // 纹理资产缺失（含 `missing:` 占位或资产被删除）→ 通道降级为 dummyTex 静默数据，不阻断编译
             const asset = this.resolveTextureAsset(catalog, channel.src);
-            validSource = asset != null;
+            validSource = true;
             if (asset) textureInputs.set(asset.id, asset);
+          } else if (channel.type === 'keyboard') {
+            validSource = true;
+          } else if (channel.type === 'audio') {
+            // 音频资产缺失 → 通道降级为静音纹理，不阻断编译
+            validSource = true;
           }
-          if (!validCommon || !validSource) {
+          if (!validCommon || !validSampling || !validSource) {
             diagnostics.push(runtimeDiagnostic('runtime.channel-plan-invalid', `${pass} 包含未解析、slot 冲突或来源无效的 channel plan`, pass, { params: { pass } }));
             continue;
           }
@@ -855,6 +1150,7 @@ export class ShadertoyRuntime implements RuntimeApi {
           buffers,
           previewBuffers,
           textures,
+          audio: [...(setup.audio ?? [])],
           options,
           timingPlan: setup.timingPlan
             ? { bufferOrder: [...setup.timingPlan.bufferOrder], revision: setup.timingPlan.revision }
@@ -930,6 +1226,7 @@ export class ShadertoyRuntime implements RuntimeApi {
         const validCommon = Number.isInteger(channel.index)
           && channel.index >= 0
           && channel.index <= 3
+          && channel.type === 'texture'
           && (channel.filter === 'linear' || channel.filter === 'nearest')
           && (channel.wrap === 'repeat' || channel.wrap === 'clamp')
           && !usedSlots.has(channel.index);
@@ -1025,6 +1322,8 @@ export class ShadertoyRuntime implements RuntimeApi {
     this.textureAssets = candidate.textures;
     this.options = candidate.options;
     this.timingPlan = candidate.timingPlan;
+    this.applyKeyboardActivity(candidate.options);
+    this.applyAudioAssets(candidate.audio, candidate.options);
     this.uniformVals = candidate.uniforms;
     this.simValid = false;
     this.simFrame = -1;
@@ -1284,7 +1583,7 @@ export class ShadertoyRuntime implements RuntimeApi {
     }
   }
 
-  private sampler(filter: RuntimeChannelCfg['filter'], wrap: RuntimeChannelCfg['wrap']): WebGLSampler {
+  private sampler(filter: 'linear' | 'nearest', wrap: 'repeat' | 'clamp'): WebGLSampler {
     const key = `${filter}:${wrap}`;
     const cached = this.samplers.get(key);
     if (cached) return cached;
@@ -1315,11 +1614,24 @@ export class ShadertoyRuntime implements RuntimeApi {
         const textureIndex = selectChannelTexture(phase === 'buffer' ? 'buffer-before-flip' : 'image-after-flip', channel.timing, source.read).textureIndex;
         bound[slot] = source.tex[textureIndex];
         dimensions[slot] = [source.w, source.h];
-      } else {
+      } else if (channel.type === 'texture') {
         const source = this.textureAssets.get(channel.src);
         if (!source) continue;
         bound[slot] = source.texture;
         dimensions[slot] = [source.width, source.height];
+      } else if (channel.type === 'keyboard') {
+        if (!this.keyboardTex) continue;
+        bound[slot] = this.keyboardTex;
+        dimensions[slot] = [256, 2];
+        samplers[slot] = this.sampler('nearest', 'clamp');
+        continue;
+      } else if (channel.type === 'audio') {
+        const graph = this.audioGraphs.get(channel.src);
+        if (!graph || !graph.tex) continue;
+        bound[slot] = graph.tex;
+        dimensions[slot] = [512, 2];
+        samplers[slot] = this.sampler(channel.filter, channel.wrap);
+        continue;
       }
       samplers[slot] = this.sampler(channel.filter, channel.wrap);
     }
@@ -1387,7 +1699,7 @@ export class ShadertoyRuntime implements RuntimeApi {
     const utd = this.u(prog, 'iTimeDelta');
     if (utd) gl.uniform1f(utd, dt);
     const uf = this.u(prog, 'iFrame');
-    if (uf) gl.uniform1f(uf, this.frame);
+    if (uf) gl.uniform1i(uf, this.frame);
     const um = this.u(prog, 'iMouse');
     if (um) {
       const mousePixel = (value: number, dimension: number) =>
@@ -1454,6 +1766,8 @@ export class ShadertoyRuntime implements RuntimeApi {
     if (!offline) this.simValid = false;
     this.resize();
     this.rebuildBuffers();
+    this.uploadKeyboardState();
+    this.updateAudioTextures();
     gl.bindVertexArray(this.vao);
     const d = new Date();
     for (const bid of this.timingPlan.bufferOrder) {
@@ -1467,12 +1781,15 @@ export class ShadertoyRuntime implements RuntimeApi {
     }
     for (const b of this.buffers.values()) b.read = (b.read ^ 1) as 0 | 1;
     this.present(dt, target, d);
+    if (this.keyboardTex) this.keyboardData.fill(0, 0, 256);
   }
 
   play() {
     if (this.running) return;
     this.running = true;
     this.lastTick = performance.now();
+    void this.audioCtx?.resume();
+    for (const graph of this.audioGraphs.values()) void graph.el.play().catch(() => {});
     const loop = (now: number) => {
       if (!this.running) return;
       const dtRaw = (now - this.lastTick) / 1000;
@@ -1495,6 +1812,7 @@ export class ShadertoyRuntime implements RuntimeApi {
   pause() {
     this.running = false;
     cancelAnimationFrame(this.rafId);
+    for (const graph of this.audioGraphs.values()) graph.el.pause();
   }
 
   reset() {
@@ -1519,6 +1837,11 @@ export class ShadertoyRuntime implements RuntimeApi {
     this.time = Math.max(0, t);
     if (!this.running) this.draw(0);
     this.emitStats();
+  }
+
+  /** 当前预览时间（秒），供缩略图等场景捕获当前帧时刻。 */
+  getTime(): number {
+    return this.time;
   }
 
   setResolutionScale(s: number) {
@@ -1628,6 +1951,14 @@ export class ShadertoyRuntime implements RuntimeApi {
     if (this.disposed) return;
     this.disposed = true;
     this.pause();
+    this.keyboardDetach?.();
+    this.keyboardDetach = null;
+    this.keyboardActive = false;
+    if (this.keyboardTex) {
+      this.gl.deleteTexture(this.keyboardTex);
+      this.keyboardTex = null;
+    }
+    this.destroyAllAudioGraphs();
     this.ro.disconnect();
     this.releasePreviewDisplay();
     this.destroySoundSnapshot(this.soundSnapshot);

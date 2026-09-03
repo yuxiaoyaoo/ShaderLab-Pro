@@ -21,6 +21,17 @@ export interface BridgeMock {
   writeBinaryFile?: (path: string, dataBase64: string) => Promise<void>;
   createDir?: (path: string) => Promise<void>;
   deleteFile?: (path: string) => Promise<void>;
+  libraryRoot?: () => Promise<string>;
+  listLibrary?: (root: string) => Promise<LibraryEntryInfo[]>;
+  deleteDir?: (root: string, path: string) => Promise<void>;
+  revealInFolder?: (path: string) => Promise<void>;
+}
+
+export interface LibraryEntryInfo {
+  dir: string;
+  name: string;
+  modified: string;
+  hasThumbnail: boolean;
 }
 
 declare global {
@@ -155,6 +166,34 @@ export async function deleteFile(path: string): Promise<void> {
   if (m && m.deleteFile) return m.deleteFile(path);
   if (!hasTauri()) throw new NativeUnavailableError();
   await invokeBridge('bridge.delete-file-failed', 'delete_file', { path });
+}
+
+export async function libraryRoot(): Promise<string> {
+  const m = typeof window !== 'undefined' ? window.__slpMockBridge : undefined;
+  if (m && m.libraryRoot) return m.libraryRoot();
+  if (!hasTauri()) throw new NativeUnavailableError();
+  return invokeBridge('bridge.library-root-failed', 'library_root');
+}
+
+export async function listLibrary(root: string): Promise<LibraryEntryInfo[]> {
+  const m = typeof window !== 'undefined' ? window.__slpMockBridge : undefined;
+  if (m && m.listLibrary) return m.listLibrary(root);
+  if (!hasTauri()) throw new NativeUnavailableError();
+  return invokeBridge('bridge.list-library-failed', 'list_library', { root });
+}
+
+export async function deleteDir(root: string, path: string): Promise<void> {
+  const m = typeof window !== 'undefined' ? window.__slpMockBridge : undefined;
+  if (m && m.deleteDir) return m.deleteDir(root, path);
+  if (!hasTauri()) throw new NativeUnavailableError();
+  await invokeBridge('bridge.delete-dir-failed', 'delete_dir', { root, path });
+}
+
+export async function revealInFolder(path: string): Promise<void> {
+  const m = typeof window !== 'undefined' ? window.__slpMockBridge : undefined;
+  if (m && m.revealInFolder) return m.revealInFolder(path);
+  if (!hasTauri()) throw new NativeUnavailableError();
+  await invokeBridge('bridge.reveal-in-folder-failed', 'reveal_in_folder', { path });
 }
 
 export function blobToBase64(blob: Blob): Promise<string> {

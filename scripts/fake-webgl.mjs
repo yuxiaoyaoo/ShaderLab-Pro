@@ -5,6 +5,37 @@ const restoreProperty = (target, key, descriptor) => {
 
 const handleId = (value) => value?.id ?? null;
 
+/**
+ * Patches globalThis.window with addEventListener/removeEventListener so code
+ * under test can attach window-level handlers (e.g. runtime keyboard capture).
+ * Returns a dispatcher for firing synthetic events and a detach for cleanup.
+ */
+export function installWindowEventCapture() {
+  const win = globalThis.window;
+  if (!win || typeof win !== 'object') {
+    throw new Error('installWindowEventCapture: globalThis.window mock must exist first');
+  }
+  const windowListeners = new Map();
+  win.addEventListener = (kind, listener) => {
+    if (!windowListeners.has(kind)) windowListeners.set(kind, new Set());
+    windowListeners.get(kind).add(listener);
+  };
+  win.removeEventListener = (kind, listener) => {
+    windowListeners.get(kind)?.delete(listener);
+  };
+  return {
+    dispatch(kind, event) {
+      for (const listener of [...(windowListeners.get(kind) ?? [])]) listener(event);
+    },
+    listenerCount(kind) { return windowListeners.get(kind)?.size ?? 0; },
+    detach() {
+      delete win.addEventListener;
+      delete win.removeEventListener;
+      windowListeners.clear();
+    },
+  };
+}
+
 export function installFakeWebGL({ width = 320, height = 180 } = {}) {
   const saved = {
     document: Object.getOwnPropertyDescriptor(globalThis, 'document'),
@@ -48,6 +79,8 @@ export function installFakeWebGL({ width = 320, height = 180 } = {}) {
     TEXTURE_BINDING_2D: 0x8069,
     RGBA: 0x1908,
     RGBA8: 0x8058,
+    RED: 0x1903,
+    R8: 0x8229,
     UNSIGNED_BYTE: 0x1401,
     TEXTURE_MIN_FILTER: 0x2801,
     TEXTURE_MAG_FILTER: 0x2800,
@@ -110,7 +143,7 @@ export function installFakeWebGL({ width = 320, height = 180 } = {}) {
     uniform4fv(location, value) { location.program.uniforms.set(location.name, [...value]); },
 
     createTexture() {
-      const texture = makeHandle('texture', { width: 0, height: 0, label: 'unallocated', params: new Map(), allocations: 0 });
+      const texture = makeHandle('texture', { width: 0, height: 0, label: 'unallocated', params: new Map(), allocations: 0, subImages: [] });
       textures.push(texture);
       return texture;
     },
@@ -126,6 +159,23 @@ export function installFakeWebGL({ width = 320, height = 180 } = {}) {
       texture.height = source?.height ?? args[4];
       texture.allocations += 1;
       texture.label = `clear:${texture.id}:${texture.allocations}`;
+    },
+    texSubImage2D(...args) {
+      const texture = textureUnits[activeTextureUnit];
+      if (!texture) throw new Error('texSubImage2D without bound texture');
+      const [target, level, xOffset, yOffset, uploadWidth, uploadHeight, format, type, pixels] = args;
+      if (target !== this.TEXTURE_2D) throw new Error('texSubImage2D supports TEXTURE_2D only');
+      if (level !== 0) throw new Error('texSubImage2D supports level 0 only');
+      texture.subImages.push({
+        xOffset,
+        yOffset,
+        width: uploadWidth,
+        height: uploadHeight,
+        format,
+        type,
+        pixels: pixels instanceof Uint8Array ? Uint8Array.from(pixels) : pixels ?? null,
+      });
+      texture.label = `sub:${texture.id}:${texture.subImages.length}`;
     },
     texParameteri(_target, parameter, value) {
       textureUnits[activeTextureUnit]?.params.set(parameter, value);
@@ -251,6 +301,9 @@ export function installFakeWebGL({ width = 320, height = 180 } = {}) {
     getContext(kind) { return kind === 'webgl2' ? gl : null; },
     getBoundingClientRect: () => ({ left: 0, top: 0, width, height }),
     addEventListener(kind, listener) { listeners.set(kind, listener); },
+    removeEventListener(kind, listener) {
+      if (listeners.get(kind) === listener) listeners.delete(kind);
+    },
     setPointerCapture: () => {},
     toBlob(callback, type) {
       const payload = JSON.stringify({ type, width: this.width, height: this.height, content: defaultContent });
@@ -279,6 +332,7 @@ export function installFakeWebGL({ width = 320, height = 180 } = {}) {
     canvas,
     gl,
     parent,
+    canvasListeners: listeners,
     textures,
     framebuffers,
     samplers,

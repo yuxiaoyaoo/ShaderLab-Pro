@@ -15,7 +15,7 @@ import { captureFrameNeedsReset, selectChannelTexture } from '../src/shadertoy/c
 import { planRuntimeFrame, ShadertoyRuntime } from '../src/shadertoy/runtime.ts';
 import { buildRuntimeSetup } from '../src/shadertoy/setupBuilder.ts';
 import { openProjectFrom, saveProjectTo, writeAutosave, readLatestAutosave } from '../src/project/projectIO.ts';
-import { installFakeWebGL } from './fake-webgl.mjs';
+import { installFakeWebGL, installWindowEventCapture } from './fake-webgl.mjs';
 
 const storage = new Map();
 globalThis.localStorage = {
@@ -30,6 +30,7 @@ globalThis.window = { __slpMockBridge: {
   readTextFile: async (path) => { if (!files.has(path)) throw new Error(`ENOENT ${path}`); return files.get(path); },
   writeTextFilesAtomic: async (entries) => { atomicCalls.push(entries.map((entry) => ({ ...entry }))); for (const entry of entries) files.set(entry.path, entry.contents); },
 } };
+installWindowEventCapture();
 
 const sampleGraph = (pass, nodeId) => ({
   ...createEmptyGraph(pass),

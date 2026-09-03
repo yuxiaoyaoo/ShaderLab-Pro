@@ -53,6 +53,7 @@ import type {
   CaptureSize,
   RenderPassId,
   RuntimeApi,
+  RuntimeAudioAsset,
   RuntimeStats,
   RuntimeTextureAsset,
 } from './shadertoy/runtime';
@@ -66,7 +67,22 @@ import {
   type ShaderlabProject,
   type SrcPassId,
 } from './project/types';
-import { hasTauri, pickFile, pickFolder, readBinaryFile, readTextFile, writeTextFile } from './project/bridge';
+import {
+  blobToBase64,
+  deleteDir,
+  hasTauri,
+  libraryRoot,
+  listLibrary,
+  pickFile,
+  pickFolder,
+  readBinaryFile,
+  readTextFile,
+  revealInFolder,
+  writeBinaryFile,
+  writeTextFile,
+  type LibraryEntryInfo,
+} from './project/bridge';
+import { THUMBNAIL_FILE, libraryDirName } from './project/library';
 import {
   parseShadertoyJson,
   shadertoyFileName,
@@ -80,6 +96,7 @@ import {
   saveProjectTo,
   writeAutosave,
   writeSession,
+  type OpenedProject,
 } from './project/projectIO';
 import { adoptTemplate, listUserTemplates, type UserTemplateViewDto } from './agent/agentClient';
 import { buildRuntimeSetup } from './shadertoy/setupBuilder';
@@ -97,8 +114,9 @@ import {
 import { compileGraph, type CompileGraphOptions, type GraphArtifact } from './graph/compiler/index';
 import { deterministicHash, stableStringify } from './graph/compiler/hash';
 import { createDefaultGraph, createDefaultRaymarchGraph } from './graph/editor/defaultGraph';
-import { createAssetManifest, normalizeAssetManifest, resolveTextureEnvironment, type AssetManifest, type TextureAsset } from './graph/assets';
-import { createImportedTextureAsset, decodeTextureManifest } from './graph/assetRuntime';
+import { createAssetManifest, normalizeAssetManifest, resolveTextureEnvironment, type AssetManifest, type AudioAsset, type TextureAsset } from './graph/assets';
+import { createImportedAudioAsset, createImportedTextureAsset, decodeTextureManifest } from './graph/assetRuntime';
+import { assetPayloadBytes } from './graph/contentHash';
 import { computeGraphLibraryRevision, createGraphLibrary, createProjectNodeRegistry, createStarterNodeGroup, normalizeGraphLibrary, type CustomFunctionDefinition, type GraphLibraryDocument, type GraphNodeGroupDefinition, type NodeGroupDefinition } from './graph/library';
 import { buildNodeGroupFromSelection } from './graph/editor/groupBuilder';
 import { createGraphWorkspaceUi, graphGroupSemanticKey, graphGroupViewportKey, normalizeGraphWorkspaceUi, type GraphGroupLocation, type GraphWorkspaceUiDocument } from './graph/editor/workspaceState';
@@ -154,6 +172,7 @@ const TemplateDialog = lazy(() => import('./components/TemplateDialog'));
 const ChatPanel = lazy(() => import('./components/ChatPanel'));
 const AgentSettingsDialog = lazy(() => import('./components/AgentSettingsDialog'));
 const GraphResourcesDialog = lazy(() => import('./components/GraphResourcesDialog'));
+const GalleryView = lazy(() => import('./components/GalleryView'));
 
 const FeatureLoading: Component<{ modal?: boolean }> = (props) => (
   <div classList={{ 'feature-loading': true, 'modal-feature-loading': !!props.modal }} role="status">
@@ -357,6 +376,9 @@ const App: Component = () => {
   const [assetManifest, setAssetManifest] = createSignal<AssetManifest>(createAssetManifest());
   const [assetPayloads, setAssetPayloads] = createSignal<Record<string, string>>({});
   const [runtimeTextureAssets, setRuntimeTextureAssets] = createSignal<RuntimeTextureAsset[]>([]);
+  const [runtimeAudioAssets, setRuntimeAudioAssets] = createSignal<RuntimeAudioAsset[]>([]);
+  /** Blob URLs backing runtimeAudioAssets. Non-reactive; revoked on replace/remove/dispose. */
+  const audioObjectUrls: Record<string, string> = {};
   const [graphLibrary, setGraphLibrary] = createSignal<GraphLibraryDocument>(createGraphLibrary());
   const [graphWorkspace, setGraphWorkspace] = createSignal<GraphWorkspaceUiDocument>(createGraphWorkspaceUi());
   const [groupSelections, setGroupSelections] = createSignal<Record<string, string[]>>({});
@@ -471,6 +493,25 @@ const App: Component = () => {
     autosaveInfo = {};
   };
   const bootSession = readSession();
+
+  const [galleryOpen, setGalleryOpen] = createSignal(hasTauri() && (!bootSession || !bootSession.projectDir));
+  const [libraryEntries, setLibraryEntries] = createSignal<LibraryEntryInfo[]>([]);
+  const [libraryLoading, setLibraryLoading] = createSignal(false);
+  const [libraryError, setLibraryError] = createSignal<string | null>(null);
+  let libraryRootDir = '';
+  const refreshLibrary = async () => {
+    setLibraryLoading(true);
+    setLibraryError(null);
+    try {
+      libraryRootDir = await libraryRoot();
+      setLibraryEntries(await listLibrary(libraryRootDir));
+    } catch (e) {
+      setLibraryEntries([]);
+      setLibraryError(formatProductMessage(e));
+    } finally {
+      setLibraryLoading(false);
+    }
+  };
 
   const tabs = createMemo<{ id: TabId; label: string }[]>(() => {
     const m = meta();
@@ -648,7 +689,7 @@ const App: Component = () => {
   });
 
   const runtimeSetup = createMemo(() =>
-    buildRuntimeSetup(meta(), effectiveSources(), parsedUniforms(), uniformValues(), acceptedGraphUniforms(), passGraphResolution().resolved, runtimeGraphTextureChannels(), runtimeTextureAssets()),
+    buildRuntimeSetup(meta(), effectiveSources(), parsedUniforms(), uniformValues(), acceptedGraphUniforms(), passGraphResolution().resolved, runtimeGraphTextureChannels(), runtimeTextureAssets(), runtimeAudioAssets()),
   );
 
   const projectIssueDiagnostics = createMemo<UnifiedDiagnostic[]>(() => projectGraphIssues().map((issue) => ({
@@ -792,16 +833,20 @@ const App: Component = () => {
       params: { pass: graphTexturePass },
       fallback: t('app.error.shadertoyGraphTextureUnsupported', { pass: graphTexturePass }),
     };
-    const codeTexturePass = ALL_GRAPH_PASS_IDS.find((pass) => runtimePassEnabled(pass)
-      && passAuthoring(pass) === 'code'
-      && (meta().passes[pass].channels ?? []).some((channel) => channel.type === 'texture'));
-    return codeTexturePass
-      ? {
-          code: 'export.shadertoy-code-texture-unsupported',
-          params: { pass: codeTexturePass },
-          fallback: t('app.error.shadertoyCodeTextureUnsupported', { pass: codeTexturePass }),
+    const missingAssets: string[] = [];
+    for (const pass of ['image', ...BUFFER_IDS] as const) {
+      for (const c of meta().passes[pass]?.channels ?? []) {
+        if ((c.type === 'texture' || c.type === 'audio') && c.src.startsWith('missing:')) {
+          missingAssets.push(c.src.slice('missing:'.length));
         }
-      : undefined;
+      }
+    }
+    if (missingAssets.length > 0) return {
+      code: 'export.shadertoy-missing-assets',
+      params: { count: missingAssets.length, list: missingAssets.join(', ') },
+      fallback: t('app.error.shadertoyMissingAssets', { count: missingAssets.length, list: missingAssets.join(', ') }),
+    };
+    return undefined;
   };
   const shadertoyExportEligibility = () => currentExportEligibility(shadertoyExportRequirements());
 
@@ -843,12 +888,71 @@ const App: Component = () => {
     if (allGraphDocuments() && Object.values(allGraphDocuments()).some((document) => document?.nodes.some((node) => node.type === 'input.texture2d' && node.values.assetId === id))) {
       return notify(t('app.error.textureInUse', { id }), 'error');
     }
+    if (Object.values(meta().passes).some((p) => (p.channels ?? []).some((c) => c.type === 'texture' && c.src === id))) {
+      return notify(t('app.error.textureInUse', { id }), 'error');
+    }
     setAssetManifest((manifest) => ({ ...manifest, assets: manifest.assets.filter((asset) => asset.id !== id) }));
     setAssetPayloads((items) => { const next = { ...items }; delete next[id]; return next; });
     setRuntimeTextureAssets((items) => { for (const item of items.filter((asset) => asset.id === id)) if (item.source && 'close' in item.source) (item.source as ImageBitmap).close(); return items.filter((asset) => asset.id !== id); });
     setDirty(true);
     scheduleCompile();
   };
+  const importAudioAsset = async () => {
+    try {
+      const path = await pickFile(t('app.picker.importAudio'), ['mp3', 'ogg', 'oga', 'wav', 'm4a', 'flac']);
+      if (!path) return;
+      const payload = await readBinaryFile(path);
+      const imported = createImportedAudioAsset(path, payload, assetManifest().audio ?? []);
+      const nextManifest = normalizeAssetManifest({
+        ...assetManifest(),
+        assets: assetManifest().assets,
+        audio: [...(assetManifest().audio ?? []), imported],
+      });
+      const url = URL.createObjectURL(new Blob([assetPayloadBytes(payload)], { type: imported.mediaType }));
+      audioObjectUrls[imported.id] = url;
+      setAssetManifest(nextManifest);
+      setAssetPayloads((items) => ({ ...items, [imported.id]: payload }));
+      setRuntimeAudioAssets((items) => [...items, { id: imported.id, url }]);
+      setDirty(true);
+      scheduleCompile({ visual: true, sound: false });
+      notify(t('app.toast.audioImported', { name: imported.name }), 'ok');
+    } catch (error) {
+      notify(t('app.error.audioImportFailed', { detail: formatProductMessage(error) }), 'error');
+    }
+  };
+
+  const removeAudioAsset = (id: string) => {
+    if (Object.values(meta().passes).some((p) => (p.channels ?? []).some((c) => c.type === 'audio' && c.src === id))) {
+      return notify(t('app.error.audioInUse', { id }), 'error');
+    }
+    setAssetManifest((manifest) => normalizeAssetManifest({
+      ...manifest,
+      assets: manifest.assets,
+      audio: (manifest.audio ?? []).filter((asset) => asset.id !== id),
+    }));
+    setAssetPayloads((items) => { const next = { ...items }; delete next[id]; return next; });
+    setRuntimeAudioAssets((items) => items.filter((asset) => asset.id !== id));
+    const url = audioObjectUrls[id];
+    if (url) {
+      URL.revokeObjectURL(url);
+      delete audioObjectUrls[id];
+    }
+    setDirty(true);
+  };
+
+  /** Rebuild blob URLs for all audio assets in the manifest (missing payload → url '' → silence). */
+  const rebuildAudioAssets = (manifest: AssetManifest, payloads: Record<string, string>) => {
+    for (const url of Object.values(audioObjectUrls)) URL.revokeObjectURL(url);
+    for (const id of Object.keys(audioObjectUrls)) delete audioObjectUrls[id];
+    const runtime: RuntimeAudioAsset[] = (manifest.audio ?? []).map((asset) => {
+      const payload = payloads[asset.id];
+      const url = payload ? URL.createObjectURL(new Blob([assetPayloadBytes(payload)], { type: asset.mediaType })) : '';
+      audioObjectUrls[asset.id] = url;
+      return { id: asset.id, url };
+    });
+    setRuntimeAudioAssets(runtime);
+  };
+
   const applyGraphLibrarySemanticChange = (
     library: GraphLibraryDocument,
     patches: GraphLibrarySemanticPatches = {},
@@ -944,7 +1048,7 @@ const App: Component = () => {
     return {
       visualContract,
       soundContract,
-      setup: buildRuntimeSetup(meta(), candidateSources, parsed, uniformValues(), generatedUniforms, passGraphResolution().resolved, runtimeGraphTextureChannels(), runtimeTextureAssets()),
+      setup: buildRuntimeSetup(meta(), candidateSources, parsed, uniformValues(), generatedUniforms, passGraphResolution().resolved, runtimeGraphTextureChannels(), runtimeTextureAssets(), runtimeAudioAssets()),
     };
   };
 
@@ -1728,10 +1832,49 @@ const App: Component = () => {
       filter: 'linear', wrap: 'repeat', timing: pass === 'image' ? 'current' : 'previous',
     });
     updatePassGraph({ ...passGraph(), edges });
+    setMeta((m) => ({ ...m, passes: { ...m.passes, [pass]: { ...m.passes[pass], channels: (m.passes[pass].channels ?? []).filter((c) => !(c.index === chIndex && c.type !== 'buffer')) } } }));
+    setDirty(true);
+  };
+
+  const setCodeChannel = (pass: 'image' | BufferId, chIndex: number, selection: string) => {
+    preserveDirtyAiUndo();
+    if (passAuthoring(pass) === 'graph') return notify(t('app.error.graphPassUsePassGraph'), 'error');
+    const edges = passGraph().edges.filter((edge) => !(edge.target === pass && edge.endpoint.kind === 'code-slot' && edge.endpoint.slot === chIndex));
+    if (selection && isBufferId(selection)) edges.push({
+      id: `code-${pass}-${chIndex}-${Date.now().toString(36)}`, source: selection, target: pass,
+      endpoint: { kind: 'code-slot', slot: chIndex as 0 | 1 | 2 | 3 }, slot: { mode: 'manual', index: chIndex as 0 | 1 | 2 | 3 },
+      filter: 'linear', wrap: 'repeat', timing: pass === 'image' ? 'current' : 'previous',
+    });
+    updatePassGraph({ ...passGraph(), edges });
+    setMeta((m) => {
+      const passConfig = m.passes[pass];
+      const kept = (passConfig.channels ?? []).filter((c) => !(c.index === chIndex && c.type !== 'buffer'));
+      let next = kept;
+      if (selection.startsWith('texture:')) {
+        next = [...kept, { index: chIndex, type: 'texture' as const, src: selection.slice('texture:'.length), filter: 'linear' as const, wrap: 'repeat' as const }];
+      } else if (selection === 'keyboard') {
+        next = [...kept, { index: chIndex, type: 'keyboard' as const, src: '', filter: 'nearest' as const, wrap: 'clamp' as const }];
+      } else if (selection.startsWith('audio:')) {
+        next = [...kept, { index: chIndex, type: 'audio' as const, src: selection.slice('audio:'.length), filter: 'linear' as const, wrap: 'clamp' as const }];
+      }
+      return { ...m, passes: { ...m.passes, [pass]: { ...passConfig, channels: next } } };
+    });
+    setDirty(true);
+    scheduleCompile({ visual: true, sound: false });
   };
 
   const getPassChannel = (pass: 'image' | BufferId, chIndex: number): string =>
     passGraphResolution().resolved?.edges.find((edge) => edge.target === pass && edge.slot === chIndex)?.source ?? '';
+
+  const getChannelValue = (pass: 'image' | BufferId, chIndex: number): string => {
+    const channel = (meta().passes[pass].channels ?? []).find((c) => c.index === chIndex && (c.type === 'texture' || c.type === 'keyboard' || c.type === 'audio'));
+    if (channel?.type === 'texture' || channel?.type === 'audio') {
+      if (channel.src.startsWith('missing:')) return 'missing';
+      return channel.type === 'texture' ? `texture:${channel.src}` : `audio:${channel.src}`;
+    }
+    if (channel?.type === 'keyboard') return 'keyboard';
+    return getPassChannel(pass, chIndex);
+  };
 
   const applyPreviewTarget = (t: RenderPassId) => {
     setPreviewTarget(t);
@@ -1765,6 +1908,7 @@ const App: Component = () => {
     setAssetManifest(createAssetManifest());
     setAssetPayloads({});
     setRuntimeTextureAssets([]);
+    rebuildAudioAssets(createAssetManifest(), {});
     setGraphLibrary(createGraphLibrary());
     setMeta(createProject(t('app.project.unnamed')));
     setPassGraph(createPassGraphDocument());
@@ -1850,6 +1994,7 @@ const App: Component = () => {
     setAssetManifest(createAssetManifest());
     setAssetPayloads({});
     setRuntimeTextureAssets([]);
+    rebuildAudioAssets(createAssetManifest(), {});
     setGraphLibrary(createGraphLibrary());
     setMeta(m);
     setPassGraph(passGraphFromLegacy(m));
@@ -1869,6 +2014,49 @@ const App: Component = () => {
     notify(t('app.toast.projectCreatedFromTemplate', { name: display.name }), 'ok');
   };
 
+  const applyOpenedProject = async (opened: OpenedProject) => {
+    const decodedTextures = await decodeTextureManifest(opened.assetManifest, opened.assetPayloads);
+    for (const texture of runtimeTextureAssets()) if (texture.source && 'close' in texture.source) (texture.source as ImageBitmap).close();
+    setAssetManifest(opened.assetManifest);
+    setAssetPayloads(opened.assetPayloads);
+    setRuntimeTextureAssets(decodedTextures);
+    rebuildAudioAssets(opened.assetManifest, opened.assetPayloads);
+    setGraphLibrary(opened.graphLibrary);
+    applySources(opened.sources);
+    setGraphWorkspace(opened.graphWorkspace);
+    setGroupSelections({});
+    setGroupHistories({});
+    setMeta(opened.meta);
+    setPassGraph(opened.passGraph);
+    setProjectGraphIssues(opened.graphIssues);
+    setUniformValues(valuesFromPersisted(opened.meta.uniforms));
+    setProjectName(opened.meta.name || t('app.project.unnamed'));
+    setProjectDir(opened.dir);
+    setPreviewTarget('image');
+    api?.setPreviewTarget('image');
+    setDiagnostics([]);
+    setActiveTab('image');
+    setDirty(opened.needsResave);
+    const graphPasses = ALL_GRAPH_PASS_IDS.filter((pass) => opened.meta.passes[pass].authoring?.kind === 'graph');
+    let editableGraphCount = 0;
+    for (const pass of graphPasses) {
+      const document = opened.graphDocuments[pass];
+      const options = compileOptionsFor(pass);
+      if (document && activatePersistedGraph(document, options, pass === 'sound' || (opened.passGraphIdentityValid && !!opened.resolvedPassGraph))) editableGraphCount++;
+    }
+    if (editableGraphCount === graphPasses.length && graphPasses.length) setTimeout(() => compileGraphCohort(), 0);
+    else scheduleCompile();
+    const fallback = editableGraphCount !== graphPasses.length || !opened.passGraphIdentityValid;
+    notify(
+      fallback
+        ? t('app.toast.projectOpenedWithFallback', { name: opened.meta.name })
+        : opened.needsResave
+          ? t('app.toast.projectOpenedNeedsResave', { name: opened.meta.name })
+          : t('app.toast.projectOpened', { name: opened.meta.name }),
+      fallback ? 'error' : 'ok',
+    );
+  };
+
   const openProject = async () => {
     if (!await confirmUnsaved()) return;
     let dir: string | null;
@@ -1881,45 +2069,7 @@ const App: Component = () => {
     if (!dir) return;
     try {
       const opened = await openProjectFrom(dir);
-      const decodedTextures = await decodeTextureManifest(opened.assetManifest, opened.assetPayloads);
-      for (const texture of runtimeTextureAssets()) if (texture.source && 'close' in texture.source) (texture.source as ImageBitmap).close();
-      setAssetManifest(opened.assetManifest);
-      setAssetPayloads(opened.assetPayloads);
-      setRuntimeTextureAssets(decodedTextures);
-      setGraphLibrary(opened.graphLibrary);
-      applySources(opened.sources);
-      setGraphWorkspace(opened.graphWorkspace);
-      setGroupSelections({});
-      setGroupHistories({});
-      setMeta(opened.meta);
-      setPassGraph(opened.passGraph);
-      setProjectGraphIssues(opened.graphIssues);
-      setUniformValues(valuesFromPersisted(opened.meta.uniforms));
-      setProjectName(opened.meta.name || t('app.project.unnamed'));
-      setProjectDir(opened.dir);
-      setPreviewTarget('image');
-      api?.setPreviewTarget('image');
-      setDiagnostics([]);
-      setActiveTab('image');
-      setDirty(opened.needsResave);
-      const graphPasses = ALL_GRAPH_PASS_IDS.filter((pass) => opened.meta.passes[pass].authoring?.kind === 'graph');
-      let editableGraphCount = 0;
-      for (const pass of graphPasses) {
-        const document = opened.graphDocuments[pass];
-        const options = compileOptionsFor(pass);
-        if (document && activatePersistedGraph(document, options, pass === 'sound' || (opened.passGraphIdentityValid && !!opened.resolvedPassGraph))) editableGraphCount++;
-      }
-      if (editableGraphCount === graphPasses.length && graphPasses.length) setTimeout(() => compileGraphCohort(), 0);
-      else scheduleCompile();
-      const fallback = editableGraphCount !== graphPasses.length || !opened.passGraphIdentityValid;
-      notify(
-        fallback
-          ? t('app.toast.projectOpenedWithFallback', { name: opened.meta.name })
-          : opened.needsResave
-            ? t('app.toast.projectOpenedNeedsResave', { name: opened.meta.name })
-            : t('app.toast.projectOpened', { name: opened.meta.name }),
-        fallback ? 'error' : 'ok',
-      );
+      await applyOpenedProject(opened);
     } catch (e) {
       notify(t('app.error.projectOpenFailed', { detail: formatProductMessage(e) }), 'error');
     }
@@ -1994,6 +2144,53 @@ const App: Component = () => {
     };
   };
 
+  const captureThumbnail = (dir: string) => {
+    void (async () => {
+      try {
+        const time = api?.getTime?.() ?? 0;
+        const blob = await Promise.race([
+          api?.captureAt(time, 0, 0, { width: 640, height: 360 }) ?? Promise.resolve(null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+        ]);
+        if (!blob) return;
+        const data = await blobToBase64(blob);
+        await writeBinaryFile(joinPath(dir, THUMBNAIL_FILE), data);
+      } catch {
+        return;
+      } finally {
+        api?.endCapture();
+      }
+    })();
+  };
+
+  const saveProjectToLibrary = async () => {
+    if (currentUniformConflict()) {
+      notify(t('app.error.projectSaveFailed', { detail: currentUniformConflictMessage() }), 'error');
+      return;
+    }
+    try {
+      const root = await libraryRoot();
+      const dir = joinPath(root, libraryDirName(projectName()));
+      const m = meta();
+      const full: ShaderlabProject = {
+        ...m,
+        name: projectName(),
+        created: m.created || new Date().toISOString(),
+        uniforms: toPersistedUniforms(uniformDecls(), uniformValues()),
+      };
+      const saved = await saveProjectTo(dir, full, effectiveSources(), currentGraphSaveOptions());
+      setMeta(saved);
+      setProjectGraphIssues([]);
+      advanceProjectIdentity();
+      setProjectDir(dir);
+      setDirty(false);
+      captureThumbnail(dir);
+      notify(t('app.toast.projectSavedTo', { path: dir }), 'ok');
+    } catch (e) {
+      notify(t('app.error.projectSaveFailed', { detail: formatProductMessage(e) }), 'error');
+    }
+  };
+
   const saveProjectAs = async () => {
     if (currentUniformConflict()) {
       notify(t('app.error.projectSaveFailed', { detail: currentUniformConflictMessage() }), 'error');
@@ -2021,6 +2218,7 @@ const App: Component = () => {
       advanceProjectIdentity();
       setProjectDir(dir);
       setDirty(false);
+      captureThumbnail(dir);
       notify(t('app.toast.projectSavedTo', { path: dir }), 'ok');
     } catch (e) {
       notify(t('app.error.projectSaveFailed', { detail: formatProductMessage(e) }), 'error');
@@ -2033,7 +2231,7 @@ const App: Component = () => {
       return;
     }
     if (!projectDir()) {
-      await saveProjectAs();
+      await saveProjectToLibrary();
       return;
     }
     try {
@@ -2047,6 +2245,7 @@ const App: Component = () => {
       setMeta(saved);
       setProjectGraphIssues([]);
       setDirty(false);
+      captureThumbnail(projectDir()!);
       notify(t('app.toast.projectSaved'), 'ok');
     } catch (e) {
       notify(t('app.error.projectSaveFailed', { detail: formatProductMessage(e) }), 'error');
@@ -2071,6 +2270,7 @@ const App: Component = () => {
       setAssetManifest(createAssetManifest());
       setAssetPayloads({});
       setRuntimeTextureAssets([]);
+      rebuildAudioAssets(createAssetManifest(), {});
       setGraphLibrary(createGraphLibrary());
       const m = createProject(imp.name || t('app.project.shadertoyImportName'));
       m.description = imp.description;
@@ -2272,6 +2472,7 @@ const App: Component = () => {
     setAssetManifest(recoveredAssets);
     setAssetPayloads(recoveredPayloads);
     setRuntimeTextureAssets(recoveredRuntimeTextures);
+    rebuildAudioAssets(recoveredAssets, recoveredPayloads);
     setGraphLibrary(recoveredLibrary);
     applySources(snap.sources);
     setGraphWorkspace(snap.graphWorkspace ? normalizeGraphWorkspaceUi(snap.graphWorkspace) : createGraphWorkspaceUi());
@@ -2493,6 +2694,52 @@ const App: Component = () => {
   const closeSpeedMenu = () => setSpeedOpen(false);
   const closeResolutionMenu = () => setPreviewResolutionOpen(false);
 
+  const openGallery = () => {
+    closeMenu();
+    closePassMenu();
+    closeUniformMenu();
+    setGalleryOpen(true);
+    void refreshLibrary();
+  };
+  const closeGallery = () => setGalleryOpen(false);
+  const openFromGallery = async (entry: LibraryEntryInfo) => {
+    if (!await confirmUnsaved()) return;
+    try {
+      const opened = await openProjectFrom(entry.dir);
+      await applyOpenedProject(opened);
+      setGalleryOpen(false);
+    } catch (e) {
+      notify(t('app.error.projectOpenFailed', { detail: formatProductMessage(e) }), 'error');
+    }
+  };
+  const deleteFromGallery = async (entry: LibraryEntryInfo) => {
+    const accepted = await requestConfirmation({
+      title: t('gallery.deleteTitle'),
+      message: t('gallery.deleteConfirm', { name: entry.name }),
+      confirmLabel: t('common.delete'),
+      danger: true,
+    });
+    if (!accepted) return;
+    try {
+      await deleteDir(libraryRootDir, entry.dir);
+      notify(t('app.toast.projectDeleted', { name: entry.name }), 'ok');
+      await refreshLibrary();
+    } catch (e) {
+      notify(t('app.error.projectDeleteFailed', { detail: formatProductMessage(e) }), 'error');
+    }
+  };
+  const revealFromGallery = async (entry: LibraryEntryInfo) => {
+    try {
+      await revealInFolder(entry.dir);
+    } catch (e) {
+      notify(t('app.error.revealFailed', { detail: formatProductMessage(e) }), 'error');
+    }
+  };
+  const newProjectFromGallery = () => {
+    setGalleryOpen(false);
+    void newProject();
+  };
+
   onMount(() => {
     initAutoUpdater();
     void refreshUserTemplates();
@@ -2543,6 +2790,7 @@ const App: Component = () => {
         else if (uniformMenuOpen()) closeUniformMenu();
         else if (passMenuOpen()) closePassMenu();
         else if (menuOpen()) closeMenu();
+        else if (galleryOpen()) setGalleryOpen(false);
         else if (chatOpen()) setChatOpen(false);
         else return;
         e.preventDefault();
@@ -2816,6 +3064,9 @@ const App: Component = () => {
                 <span>{t('app.menu.openProject')}</span>
                 <kbd>Ctrl+O</kbd>
               </button>
+              <button class="menu-item" onClick={openGallery}>
+                <span>{t('app.menu.gallery')}</span>
+              </button>
               <div class="menu-sep" />
               <button
                 class="menu-item"
@@ -2898,13 +3149,21 @@ const App: Component = () => {
                     <label class="pass-ch">
                       <span>ch{i}</span>
                       <select
-                        value={getPassChannel('image', i)}
-                        onChange={(e) => setPassChannel('image', i, e.currentTarget.value)}
+                        value={getChannelValue('image', i)}
+                        onChange={(e) => setCodeChannel('image', i, e.currentTarget.value)}
                       >
                         <option value="">—</option>
                         <For each={enabledBuffers()}>
                           {(b) => <option value={b}>{BUFFER_LETTER[b]}</option>}
                         </For>
+                        <For each={assetManifest().assets}>
+                          {(asset) => <option value={`texture:${asset.id}`}>{asset.name}</option>}
+                        </For>
+                        <For each={assetManifest().audio ?? []}>
+                          {(asset) => <option value={`audio:${asset.id}`}>{asset.name}</option>}
+                        </For>
+                        <option value="keyboard">KB</option>
+                        <option value="missing" disabled>{t('app.pass.channelMissing')}</option>
                       </select>
                     </label>
                   )}
@@ -2950,14 +3209,22 @@ const App: Component = () => {
                             <label class="pass-ch">
                               <span>ch{i}</span>
                               <select
-                                value={getPassChannel(b, i)}
-                                onChange={(e) => setPassChannel(b, i, e.currentTarget.value)}
+                                value={getChannelValue(b, i)}
+                                onChange={(e) => setCodeChannel(b, i, e.currentTarget.value)}
                               >
                                 <option value="">—</option>
                                 <option value="bufferA">A</option>
                                 <option value="bufferB">B</option>
                                 <option value="bufferC">C</option>
                                 <option value="bufferD">D</option>
+                                <For each={assetManifest().assets}>
+                                  {(asset) => <option value={`texture:${asset.id}`}>{asset.name}</option>}
+                                </For>
+                                <For each={assetManifest().audio ?? []}>
+                                  {(asset) => <option value={`audio:${asset.id}`}>{asset.name}</option>}
+                                </For>
+                                <option value="keyboard">KB</option>
+                                <option value="missing" disabled>{t('app.pass.channelMissing')}</option>
                               </select>
                             </label>
                           )}
@@ -3482,6 +3749,7 @@ const App: Component = () => {
                 playing={playing}
                 resolution={previewResolution}
                 onStats={setStats}
+                onAudioError={() => notify(t('product.runtime.audioDecodeFailed'), 'error')}
                 onReady={(a) => {
                   api = a;
                   try {
@@ -3626,13 +3894,30 @@ const App: Component = () => {
             library={graphLibrary()}
             onClose={() => setGraphResourcesOpen(false)}
             onImportTexture={() => void importTextureAsset()}
+            onImportAudio={() => void importAudioAsset()}
             onSetTextureColorSpace={setTextureColorSpace}
             onRemoveTexture={removeTextureAsset}
+            onRemoveAudio={removeAudioAsset}
             onAddStarterGroup={addStarterGroup}
             onRemoveGroup={(id, version) => removeLibraryEntry('groups', id, version)}
             onAddFunction={addCustomFunction}
             onRemoveFunction={(id, version) => removeLibraryEntry('functions', id, version)}
             onUseRaymarchTemplate={() => void useRaymarchTemplate()}
+          />
+        </Suspense>
+      </Show>
+
+      <Show when={galleryOpen()}>
+        <Suspense fallback={<FeatureLoading modal />}>
+          <GalleryView
+            entries={libraryEntries()}
+            loading={libraryLoading()}
+            error={libraryError()}
+            onOpen={(entry) => void openFromGallery(entry)}
+            onDelete={(entry) => void deleteFromGallery(entry)}
+            onReveal={(entry) => void revealFromGallery(entry)}
+            onNewProject={() => newProjectFromGallery()}
+            onClose={closeGallery}
           />
         </Suspense>
       </Show>

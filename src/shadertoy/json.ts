@@ -79,6 +79,8 @@ export interface ShadertoyImport {
   >;
   sound: boolean;
   skippedChannels: { ctype: string; count: number }[];
+  /** 导入中引用但本机不存在的外部资产（纹理/音乐），通道已以 `missing:` 占位 */
+  missingAssets: string[];
   warnings: ProductMessageDescriptor[];
 }
 
@@ -110,7 +112,8 @@ function normWrap(w: string | undefined): 'repeat' | 'clamp' {
  * 解析 Shadertoy 导出 JSON → 应用内部结构。
  * - type:buffer 的 pass 按出现顺序映射 Buffer A–D（最多 4 个）
  * - ctype:buffer 的 input 通过 outputs id 关联到目标 Buffer
- * - 其余 ctype（texture/webcam/keyboard/…）无法离线复刻，计数后跳过
+ * - ctype:keyboard → 键盘通道；ctype:texture/music → `missing:<url>` 占位通道（记录到 missingAssets）
+ * - 其余 ctype（webcam/microphone/video/cubemap/…）无法离线复刻，计数后跳过
  */
 export function parseShadertoyJson(text: string): ShadertoyImport {
   let raw: unknown;
@@ -138,11 +141,16 @@ export function parseShadertoyJson(text: string): ShadertoyImport {
     buffers: {},
     sound: false,
     skippedChannels: [],
+    missingAssets: [],
     warnings: [],
   };
   const skippedMap = new Map<string, number>();
   const noteSkipped = (ctype: string) => {
     skippedMap.set(ctype, (skippedMap.get(ctype) ?? 0) + 1);
+  };
+  const missingSet = new Set<string>();
+  const noteMissing = (url: string) => {
+    missingSet.add(url);
   };
 
   // 第一遍：落位源码，记录 buffer 输出 id → Buffer 名
@@ -198,7 +206,23 @@ export function parseShadertoyJson(text: string): ShadertoyImport {
     };
   };
 
-  // 第二遍：image + buffers 的 inputs → buffer 通道
+  // 通道映射辅助：channel 索引 + sampler 归一化（外部通道用）
+  const toExternalChannel = (
+    inp: StInput,
+    type: 'texture' | 'audio',
+    src: string,
+  ): PassChannelCfg => {
+    const s = { ...SAMPLER_DEFAULT, ...(isObj(inp.sampler) ? inp.sampler : {}) };
+    return {
+      index: Math.max(0, Math.min(3, Math.round(Number(inp.channel) || 0))),
+      type,
+      src,
+      filter: normFilter(s.filter),
+      wrap: normWrap(s.wrap),
+    };
+  };
+
+  // 第二遍：image + buffers 的 inputs → buffer/键盘/外部占位通道
   for (const [slot, rp] of passBySlot) {
     if (slot === 'sound') continue;
     const inputs = Array.isArray(rp.inputs) ? rp.inputs : [];
@@ -206,7 +230,8 @@ export function parseShadertoyJson(text: string): ShadertoyImport {
     for (const raw2 of inputs) {
       if (!isObj(raw2)) continue;
       const inp = raw2 as unknown as StInput;
-      if (toStr(inp.ctype) === 'buffer') {
+      const ctype = toStr(inp.ctype);
+      if (ctype === 'buffer') {
         const target = outputIdToBuffer.get(Number(inp.id));
         if (target) {
           cfgs.push(toChannelCfg(inp, target));
@@ -215,7 +240,24 @@ export function parseShadertoyJson(text: string): ShadertoyImport {
         noteSkipped('buffer-missing-reference');
         continue;
       }
-      noteSkipped(toStr(inp.ctype, 'unknown'));
+      if (ctype === 'keyboard') {
+        const s = { ...SAMPLER_DEFAULT, ...(isObj(inp.sampler) ? inp.sampler : {}) };
+        cfgs.push({
+          index: Math.max(0, Math.min(3, Math.round(Number(inp.channel) || 0))),
+          type: 'keyboard',
+          src: '',
+          filter: normFilter(s.filter),
+          wrap: normWrap(s.wrap),
+        });
+        continue;
+      }
+      if (ctype === 'texture' || ctype === 'music') {
+        const url = toStr(inp.src) || `${ctype}-${inp.id}`;
+        noteMissing(url);
+        cfgs.push(toExternalChannel(inp, ctype === 'texture' ? 'texture' : 'audio', `missing:${url}`));
+        continue;
+      }
+      noteSkipped(ctype || 'unknown');
     }
     if (cfgs.length === 0) continue;
     if (slot === 'image') {
@@ -238,6 +280,13 @@ export function parseShadertoyJson(text: string): ShadertoyImport {
     result.warnings.push({
       code: 'shadertoy.warning.channels-skipped',
       params: { count: result.skippedChannels.reduce((sum, item) => sum + item.count, 0) },
+    });
+  }
+  result.missingAssets = [...missingSet];
+  if (result.missingAssets.length > 0) {
+    result.warnings.push({
+      code: 'shadertoy.warning.missing-assets',
+      params: { count: result.missingAssets.length },
     });
   }
   result.sources = sourcesWithDefaults(result.sources);
@@ -326,8 +375,29 @@ export function toShadertoyJson(meta: ShaderlabProject, sources: ProjectSources)
         },
       });
     }
+    // 外部通道：keyboard 直接导出；texture/music 导出为占位（本地资产不可移植，src 置 null；
+    // `missing:` 占位保留原始 URL 以便再次导入时还原缺失状态）
+    const external = (pc?.channels ?? []).filter(
+      (c) => c.type === 'keyboard' || c.type === 'texture' || c.type === 'audio',
+    );
+    for (const c of external) {
+      const ctype = c.type === 'keyboard' ? 'keyboard' : c.type === 'audio' ? 'music' : 'texture';
+      pass.inputs.push({
+        id: nextId++,
+        src: c.src.startsWith('missing:') ? c.src.slice('missing:'.length) : null,
+        ctype,
+        channel: c.index,
+        sampler: {
+          filter: c.filter === 'nearest' ? 'nearest' : 'linear',
+          wrap: c.wrap === 'repeat' ? 'repeat' : 'clamp',
+          vflip: 'true',
+          srgb: 'false',
+          internal: 'byte',
+        },
+      });
+    }
     if (pc?.feedback && selfOutId !== null && !chs.some((c) => c.src === slot)) {
-      const used = new Set(chs.map((c) => c.index));
+      const used = new Set([...chs, ...external].map((c) => c.index));
       const freeIdx = [0, 1, 2, 3].find((i) => !used.has(i));
       if (freeIdx !== undefined) {
         pass.inputs.push({

@@ -16,6 +16,11 @@
   --elev: #141a38;
   --menu-bg: rgba(15, 20, 44, 0.92);
   --input-bg: rgba(148, 163, 216, 0.09);
+  /* 原生 <select> 弹出项配色：必须是不透明色。浏览器会拿 select 的 background
+     绘制 option 底色，而 --input-bg 是半透明的，深色主题下会退化成浅底浅字。 */
+  --select-popup-bg: #141a38;
+  --select-popup-txt: #edf0fb;
+  --select-popup-txt-dim: #8791b8;
   --code-bg: #0b1026;
   --overlay: rgba(4, 7, 20, 0.6);
   --line: rgba(255, 255, 255, 0.075);
@@ -82,6 +87,9 @@
   --elev: #f0f3fc;
   --menu-bg: rgba(255, 255, 255, 0.96);
   --input-bg: #f0f3fc;
+  --select-popup-bg: #ffffff;
+  --select-popup-txt: #232a4d;
+  --select-popup-txt-dim: #70799f;
   --code-bg: #f0f3fc;
   --overlay: rgba(35, 42, 77, 0.35);
   --line: #e3e7f4;
@@ -167,6 +175,18 @@ body {
 
 #root {
   height: 100%;
+}
+
+/* 原生下拉列表由浏览器绘制：Windows/Chromium 会取 select 的 background（本项目多为
+   半透明的 --input-bg）作为 option 底色，深色主题下浅色文字会压在浅底上几乎不可见。
+   这里给所有 <option> 兜底成不透明面板色 + 主题文字色，深浅两主题都成立。 */
+select option {
+  background: var(--select-popup-bg);
+  color: var(--select-popup-txt);
+}
+
+select option:disabled {
+  color: var(--select-popup-txt-dim);
 }
 
 /* ---- M7b 布局骨架：aurora 背景 + 外壳容器 + 左侧 rail + 主区卡片 ---- */
@@ -602,8 +622,8 @@ body {
 }
 
 .chip-select option {
-  background: var(--menu-bg);
-  color: var(--txt);
+  background: var(--select-popup-bg);
+  color: var(--select-popup-txt);
 }
 
 .menu-root.chip-slot {
@@ -872,6 +892,38 @@ body.resizing .iframe-blocker {
   place-items: center;
 }
 
+/* 键盘采集指示灯：仅当 setup 含键盘通道且指针悬停预览时点亮 */
+.kb-capture-badge {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(13, 16, 24, 0.72);
+  color: rgba(235, 240, 255, 0.92);
+  font-size: 12px;
+  line-height: 1;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.kb-capture-badge.on {
+  opacity: 1;
+}
+
+.kb-capture-badge i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.8);
+}
+
 /* 画布容器：渐变底 + HUD 悬浮层 */
 .canvas {
   position: relative;
@@ -1102,8 +1154,8 @@ input[type='range']::-moz-range-thumb {
 }
 
 .res-select option {
-  background: var(--menu-bg);
-  color: var(--txt);
+  background: var(--select-popup-bg);
+  color: var(--select-popup-txt);
 }
 
 .ctl-label {
@@ -1519,6 +1571,14 @@ kbd {
   font-size: 11px;
   outline: none;
   cursor: pointer;
+}
+
+.pass-ch select:hover {
+  border-color: var(--line-strong);
+}
+
+.pass-ch select:focus-visible {
+  border-color: var(--brand1);
 }
 
 .uniform-pop {
@@ -3645,8 +3705,68 @@ kbd {
   border: 0;
 }
 
-/* M5 project-level Pass Graph stays visually and semantically separate from pass-local expression graphs. */
-.pass-graph-panel{position:absolute;inset:42px 10px 30px 10px;z-index:45;display:flex;flex-direction:column;gap:10px;padding:12px;background:var(--panel,#151821);border:1px solid var(--border,#343947);border-radius:10px;box-shadow:0 16px 48px #0009;overflow:auto}.pass-graph-panel>header{display:flex;align-items:center;justify-content:space-between;gap:12px}.pass-graph-panel>header>div{display:flex;align-items:center;gap:8px}.pass-graph-panel header small{color:var(--muted,#9299aa)}.pass-graph-nodes{display:flex;flex-wrap:wrap;gap:8px}.pass-graph-nodes>span{display:flex;flex-direction:column;min-width:100px;padding:8px 10px;border:1px solid var(--border,#343947);border-radius:7px;background:var(--surface,#20242f)}.pass-graph-nodes small{color:var(--muted,#9299aa)}.pass-graph-edges{display:grid;gap:8px}.pass-graph-edge{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));align-items:end;gap:8px;padding:10px;border:1px solid var(--border,#343947);border-radius:8px}.pass-graph-edge legend{padding:0 6px;font-weight:650}.pass-graph-edge label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted,#9299aa)}.pass-graph-edge select{min-height:30px;color:inherit;background:var(--surface,#20242f);border:1px solid var(--border,#343947);border-radius:5px}.pass-graph-diagnostics{padding:8px;border:1px solid #d15b5b88;border-radius:7px;background:#8c292922;color:#ffb4b4}.pass-graph-diagnostics p{margin:3px 0}.pass-graph-panel .empty{color:var(--muted,#9299aa);text-align:center}.editor{position:relative}
+/* M5 project-level Pass Graph stays visually and semantically separate from pass-local expression graphs.
+   配色统一走 M7 令牌：原先的 --panel/--border/--surface/--muted 在深色主题下过淡或未定义，
+   导致面板近乎透明、文字与选项对比度不足。 */
+.pass-graph-panel {
+  position: absolute;
+  inset: 42px 10px 30px 10px;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--elev);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  overflow: auto;
+}
+.pass-graph-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pass-graph-panel > header > div { display: flex; align-items: center; gap: 8px; }
+.pass-graph-panel header small { color: var(--txt2); }
+.pass-graph-nodes { display: flex; flex-wrap: wrap; gap: 8px; }
+.pass-graph-nodes > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 100px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--input-bg);
+}
+.pass-graph-nodes small { color: var(--txt2); }
+.pass-graph-edges { display: grid; gap: 8px; }
+.pass-graph-edge {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.pass-graph-edge legend { padding: 0 6px; font-weight: 650; color: var(--txt); }
+.pass-graph-edge label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--txt2); }
+.pass-graph-edge select {
+  min-height: 30px;
+  color: var(--txt);
+  background: var(--input-bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 6px;
+}
+.pass-graph-edge select:focus { border-color: var(--brand1); }
+.pass-graph-diagnostics {
+  padding: 8px;
+  border: 1px solid var(--danger-soft);
+  border-radius: 7px;
+  background: var(--danger-bg);
+  color: var(--danger-txt);
+}
+.pass-graph-diagnostics p { margin: 3px 0; }
+.pass-graph-panel .empty { color: var(--txt2); text-align: center; }
+.editor { position: relative; }
 
 /* Graph M6 resources */
 .modal-backdrop {
@@ -4088,4 +4208,235 @@ kbd {
   .workbench.graph-preview-right { flex-direction: column; }
   .workbench.graph-preview-right .graph-preview-host { flex: 0 0 32%; width: 100%; }
   .workbench.graph-preview-right > .pane-divider { display: none; }
+}
+
+/* ---- 画廊 / 作品库 ---- */
+.gallery-overlay {
+  z-index: 210;
+  padding: 20px;
+}
+
+.gallery-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(960px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--menu-bg);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(18px);
+  outline: none;
+}
+
+.gallery-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.gallery-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.gallery-subtitle {
+  margin: 3px 0 0;
+  color: var(--txt2);
+  font-size: 12px;
+}
+
+.gallery-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.gallery-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 220px;
+  padding: 30px 20px;
+  color: var(--txt2);
+  font-size: 13px;
+  text-align: center;
+}
+
+.gallery-state-error {
+  color: var(--error);
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.gallery-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  background: var(--panel);
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.gallery-card:hover,
+.gallery-card:focus-within {
+  border-color: var(--line-strong);
+  box-shadow: 0 6px 18px rgba(2, 6, 20, 0.25);
+}
+
+.gallery-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--input-bg);
+  cursor: pointer;
+}
+
+.gallery-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gallery-thumb-fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background: var(--brand-grad);
+  color: #fff;
+  font-size: 34px;
+  font-weight: 700;
+}
+
+.gallery-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.gallery-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.gallery-name {
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--txt);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gallery-name:hover {
+  color: var(--brand1-bright);
+}
+
+.gallery-time {
+  color: var(--txt2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gallery-menu-anchor {
+  position: relative;
+  flex: none;
+  margin-left: auto;
+}
+
+.gallery-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  background: var(--panel-strong);
+  color: var(--txt2);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.gallery-icon-btn:hover {
+  border-color: var(--line-strong);
+  color: var(--txt);
+}
+
+.gallery-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  background: var(--menu-bg);
+  box-shadow: var(--shadow-float);
+}
+
+.gallery-menu button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--txt);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gallery-menu button:hover {
+  background: var(--panel-strong);
+}
+
+.gallery-menu button.danger {
+  color: var(--error);
+}
+
+.gallery-menu button.danger:hover {
+  background: var(--danger-bg);
+}
+
+.gallery-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+@media (max-width: 560px) {
+  .gallery-grid {
+    grid-template-columns: 1fr;
+  }
 }

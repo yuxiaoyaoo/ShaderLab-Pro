@@ -44,7 +44,7 @@ import {
 import { ShadertoyRuntime } from '../src/shadertoy/runtime.ts';
 import { buildRuntimeSetup } from '../src/shadertoy/setupBuilder.ts';
 import { exportEligibility, validateExportTicket } from '../src/export/exportEligibility.ts';
-import { installFakeWebGL } from './fake-webgl.mjs';
+import { installFakeWebGL, installWindowEventCapture } from './fake-webgl.mjs';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const node = (id, type, values = {}, x = 0, y = 0) => ({ id, type, typeVersion: 1, position: { x, y }, values });
@@ -164,6 +164,7 @@ const mockBridge = {
 
 Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: mockLocalStorage });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: { __slpMockBridge: mockBridge } });
+installWindowEventCapture();
 
 try {
   // 1) Raw-byte SHA-256 identity and strict, whitespace-insensitive Base64 decoding.

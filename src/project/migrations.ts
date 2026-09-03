@@ -67,7 +67,7 @@ function normalizeChannels(id: PassId, value: unknown): PassChannelCfg[] | undef
       ? (raw.type as PassChannelCfg['type'])
       : 'buffer';
     const src = typeof raw.src === 'string' ? raw.src.trim() : '';
-    if (!src) continue;
+    if (type !== 'keyboard' && !src) continue;
     channels.push({
       index,
       type,

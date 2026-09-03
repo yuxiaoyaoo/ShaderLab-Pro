@@ -1,5 +1,5 @@
-import { normalizeAssetManifest, type AssetManifest, type TextureAsset } from './assets';
-import { assetContentHash, assetPayloadBytes } from './contentHash';
+import { normalizeAssetManifest, type AssetManifest, type AudioAsset, type TextureAsset } from './assets';
+import { MAX_ASSET_BYTES, assetContentHash, assetPayloadByteLength, assetPayloadBytes } from './contentHash';
 import type { RuntimeTextureAsset } from '../shadertoy/runtime';
 
 const BITMAP_OPTIONS: ImageBitmapOptions = {
@@ -70,6 +70,16 @@ export function textureMediaType(path: string): TextureAsset['mediaType'] {
   throw new Error('仅支持 PNG、JPEG 和 WebP 纹理');
 }
 
+export function audioMediaType(path: string): AudioAsset['mediaType'] {
+  const extension = path.split('.').pop()?.toLowerCase();
+  if (extension === 'mp3') return 'audio/mpeg';
+  if (extension === 'ogg' || extension === 'oga') return 'audio/ogg';
+  if (extension === 'wav') return 'audio/wav';
+  if (extension === 'm4a' || extension === 'mp4') return 'audio/mp4';
+  if (extension === 'flac') return 'audio/flac';
+  throw new Error('仅支持 MP3、OGG、WAV、M4A 和 FLAC 音频');
+}
+
 export async function decodeTexturePayload(asset: TextureAsset, payload: string): Promise<RuntimeTextureAsset> {
   if (assetContentHash(payload) !== asset.contentHash) throw new Error(`纹理 ${asset.id} contentHash 不匹配`);
   const bytes = assetPayloadBytes(payload);
@@ -131,4 +141,32 @@ export async function createImportedTextureAsset(path: string, payload: string, 
     contentHash: hash,
   };
   return { asset, runtime: { id, width: bitmap.width, height: bitmap.height, source: bitmap } };
+}
+
+/**
+ * Registers a music file as an audio input asset. No decode at import time —
+ * the runtime decodes on play via <audio>; failure there falls back to silence.
+ */
+export function createImportedAudioAsset(path: string, payload: string, existingAudio: readonly AudioAsset[]): AudioAsset {
+  const mediaType = audioMediaType(path);
+  const hash = assetContentHash(payload);
+  const duplicate = existingAudio.find((asset) => asset.contentHash === hash);
+  if (duplicate) throw new Error(`该音频已导入：${duplicate.name}`);
+  const byteLength = assetPayloadByteLength(payload);
+  if (byteLength < 1 || byteLength > MAX_ASSET_BYTES) throw new Error(`音频文件不能超过 ${MAX_ASSET_BYTES / 1024 / 1024} MiB`);
+  const fileName = path.replace(/\\/g, '/').split('/').pop() ?? 'audio';
+  const stem = fileName.replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48) || 'audio';
+  const idPrefix = /^[A-Za-z]/.test(stem) ? stem : `audio_${stem}`;
+  let id = `${idPrefix}_${hash.slice(0, 8)}`;
+  let suffix = 2;
+  while (existingAudio.some((asset) => asset.id === id)) id = `${idPrefix}_${hash.slice(0, 8)}_${suffix++}`;
+  const extension = mediaType === 'audio/mpeg' ? 'mp3' : mediaType === 'audio/ogg' ? 'ogg' : mediaType === 'audio/wav' ? 'wav' : mediaType === 'audio/mp4' ? 'm4a' : 'flac';
+  return {
+    id,
+    name: fileName,
+    file: `assets/${id}.${extension}`,
+    mediaType,
+    bytes: byteLength,
+    contentHash: hash,
+  };
 }

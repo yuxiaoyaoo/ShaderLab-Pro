@@ -1,0 +1,38 @@
+{
+  "shader": {
+    "ver": "0.1",
+    "info": {
+      "id": "slp-kbd-accept-001",
+      "date": "2026-08-31",
+      "viewed": 0,
+      "name": "Keyboard Demo (验收)",
+      "username": "slp-acceptance",
+      "description": "键盘通道手动验收：A 按住左半屏泛蓝，D 按住右半屏泛绿，A 按下瞬间全屏白闪一帧，顶部黄条显示 A-Z 锁存键数量。鼠标需悬停在预览画布上键盘才会被采集。",
+      "likes": 0,
+      "published": 0,
+      "flags": 0,
+      "tags": ["keyboard"]
+    },
+    "renderpass": [
+      {
+        "outputs": [{ "id": 0, "channel": 0 }],
+        "inputs": [
+          {
+            "id": 1,
+            "src": null,
+            "ctype": "keyboard",
+            "channel": 0,
+            "sampler": { "filter": "nearest", "wrap": "clamp", "vflip": "true", "srgb": "false", "internal": "byte" }
+          }
+        ],
+        "code": "// 键盘通道手动验收：iChannel0 = 256x2 键盘数据纹理（KB）\n// row0 = 本帧按下边沿（keydown 后首帧为 255，随即清零）\n// row1 = 按下锁存（按下期间保持 255，松开/移出画布清零）\nvoid mainImage(out vec4 o, in vec2 f) {\n    vec2 uv = f / iResolution.xy;\n\n    float pulseA = texelFetch(iChannel0, ivec2(65, 0), 0).x; // 'A' 本帧按下\n    float latchA = texelFetch(iChannel0, ivec2(65, 1), 0).x; // 'A' 锁存\n    float latchD = texelFetch(iChannel0, ivec2(68, 1), 0).x; // 'D' 锁存\n\n    vec3 col = vec3(0.05, 0.07, 0.10);\n\n    // A 按住：左半屏泛蓝；D 按住：右半屏泛绿\n    col += vec3(0.00, 0.22, 0.55) * latchA * smoothstep(0.55, 0.10, uv.x);\n    col += vec3(0.00, 0.45, 0.18) * latchD * smoothstep(0.45, 0.90, uv.x);\n\n    // A 按下瞬间：全屏白闪一帧（边沿）\n    col += vec3(pulseA);\n\n    // 顶部计数条：统计 A-Z 锁存数量\n    float held = 0.0;\n    for (int c = 65; c < 91; c++) held += texelFetch(iChannel0, ivec2(c, 1), 0).x;\n    col += vec3(0.95, 0.85, 0.20) * step(0.5, held) * 0.10 * smoothstep(0.85, 0.0, uv.y);\n\n    o = vec4(col, 1.0);\n}",
+        "name": "Image",
+        "description": "",
+        "type": "image"
+      }
+    ],
+    "tags": ["keyboard"],
+    "flags": 0,
+    "usePreview": 1
+  }
+}
