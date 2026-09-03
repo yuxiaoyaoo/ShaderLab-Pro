@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, type Component } from 'solid-js';
-import { difficultyLabel, locale, normalizeDifficulty, t, type TemplateDifficulty } from '../i18n';
+import { difficultyLabel, locale, normalizeDifficulty, t, type TemplateDifficulty, type TranslationKey } from '../i18n';
 import { normalizeProductMessage, type ProductMessageDescriptor } from '../productMessage';
 import ProductMessageView from './ProductMessageView';
 import { formatProductMessage } from '../productMessageFormatter';
@@ -7,7 +7,9 @@ import { useModalFocus } from './modalFocus';
 import { getBuiltinTemplateDisplay, type ProjectTemplate } from '../templates';
 import {
   deleteUserTemplate,
+  getBuiltinTemplateSource,
   saveUserTemplate,
+  type BuiltinTemplateMetaDto,
   type UserTemplateViewDto,
 } from '../agent/agentClient';
 
@@ -25,7 +27,21 @@ interface Props {
   editorCode: () => string;
   requestConfirm: (options: { title: string; message: string; confirmLabel?: string; danger?: boolean }) => Promise<boolean>;
   notify: (msg: string, kind?: 'ok' | 'error') => void;
+  /** 内置特效模板（30 个 .glsl 元数据，App 从后端拉取） */
+  builtinTemplates: BuiltinTemplateMetaDto[];
+  onApplyBuiltin: (t: BuiltinTemplateMetaDto) => boolean | Promise<boolean>;
+  onPreviewBuiltin: (name: string, code: string) => boolean;
 }
+
+/** 内置特效模板的分类顺序与显示名 */
+const EFFECT_CATEGORY_KEYS: Record<string, TranslationKey> = {
+  particles: 'template.category.particles',
+  geometry: 'template.category.geometry',
+  materials: 'template.category.materials',
+  postprocess: 'template.category.postprocess',
+  scenes: 'template.category.scenes',
+};
+const EFFECT_CATEGORIES: readonly string[] = ['particles', 'geometry', 'materials', 'postprocess', 'scenes'];
 
 const BLANK_CODE = `void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec2 uv = fragCoord / iResolution.xy;
@@ -68,6 +84,34 @@ const TemplateDialog: Component<Props> = (props) => {
         .some((value) => value.toLocaleLowerCase(currentLocale).includes(query));
     });
   });
+  const filteredBuiltinTemplates = createMemo(() => {
+    const query = normalizeForSearch(searchQuery().trim());
+    if (!query) return props.builtinTemplates;
+    return props.builtinTemplates.filter((template) => (
+      [template.name, template.description, template.difficulty, template.category, ...template.tags]
+        .some((value) => normalizeForSearch(value).includes(query))
+    ));
+  });
+
+  /** 内置特效模板预览：先按 slug 取源码，再交给 App 进入只读预览 */
+  const previewBuiltin = async (template: BuiltinTemplateMetaDto): Promise<void> => {
+    try {
+      const code = await getBuiltinTemplateSource(template.slug);
+      props.onPreviewBuiltin(template.name, code);
+    } catch {
+      /* 源码拉取失败时静默，不打断会话 */
+    }
+  };
+
+  /** 分组折叠：默认展开；搜索时强制全部展开，避免匹配项被折叠挡住 */
+  const [collapsedGroups, setCollapsedGroups] = createSignal<Record<string, boolean>>({});
+  const groupHidden = (key: string): boolean => {
+    if (searchQuery().trim() !== '') return false;
+    return collapsedGroups()[key] === true;
+  };
+  const toggleGroup = (key: string): void => {
+    setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const openCreate = (fromEditor: boolean) => {
     setEditingSlug(null);
@@ -241,52 +285,112 @@ const TemplateDialog: Component<Props> = (props) => {
           </div>
           <div class="tpl-list">
             <Show when={filteredUserTemplates().length > 0}>
-              <div class="tpl-group-title">{t('template.mine')}</div>
-              <For each={filteredUserTemplates()}>
-                {(template) => (
-                  <div class="tpl-item custom">
-                    <div class="tpl-name">{template.name}</div>
-                    <div class="tpl-desc">{template.description || template.tags.join(' · ')}</div>
-                    <div class="tpl-actions">
-                      <button
-                        class="btn mini"
-                        disabled={!props.canApplyCode}
-                        title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined}
-                        onClick={() => {
-                          if (props.onPreviewUser(template)) props.onClose();
-                        }}
-                      >
-                        {t('common.preview')}
-                      </button>
-                      <button class="btn mini" disabled={!props.canApplyCode} title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined} onClick={() => void Promise.resolve(props.onApplyUser(template)).then((ok) => { if (ok) props.onClose(); })}>
+              <button class="tpl-group-title tpl-collapse" type="button" onClick={() => toggleGroup('mine')} aria-expanded={!groupHidden('mine')}>
+                <span class="tpl-collapse-caret" aria-hidden="true" />
+                {t('template.mine')}
+              </button>
+              <Show when={!groupHidden('mine')}>
+                <For each={filteredUserTemplates()}>
+                  {(template) => (
+                    <div class="tpl-item custom">
+                      <div class="tpl-name">{template.name}</div>
+                      <div class="tpl-desc">{template.description || template.tags.join(' · ')}</div>
+                      <div class="tpl-actions">
+                        <button
+                          class="btn mini"
+                          disabled={!props.canApplyCode}
+                          title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined}
+                          onClick={() => {
+                            if (props.onPreviewUser(template)) props.onClose();
+                          }}
+                        >
+                          {t('common.preview')}
+                        </button>
+                        <button class="btn mini" disabled={!props.canApplyCode} title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined} onClick={() => void Promise.resolve(props.onApplyUser(template)).then((ok) => { if (ok) props.onClose(); })}>
+                          {t('common.apply')}
+                        </button>
+                        <button class="btn mini" onClick={() => openEdit(template)}>
+                          {t('common.edit')}
+                        </button>
+                        <button class="btn mini danger" onClick={() => void removeTemplate(template)}>
+                          {t('common.delete')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </Show>
+            <button class="tpl-group-title tpl-collapse" type="button" onClick={() => toggleGroup('projects')} aria-expanded={!groupHidden('projects')}>
+              <span class="tpl-collapse-caret" aria-hidden="true" />
+              {t('template.projects')}
+            </button>
+            <Show when={!groupHidden('projects')}>
+              <For each={filteredProjectTemplates()}>
+                {(projectTemplate) => {
+                  const display = () => getBuiltinTemplateDisplay(projectTemplate, locale());
+                  return (
+                    <div class="tpl-item">
+                      <div class="tpl-name">{display().name}</div>
+                      <div class="tpl-desc">{display().description}</div>
+                      <button class="btn" onClick={() => props.onSelect(projectTemplate)}>
                         {t('common.apply')}
                       </button>
-                      <button class="btn mini" onClick={() => openEdit(template)}>
-                        {t('common.edit')}
-                      </button>
-                      <button class="btn mini danger" onClick={() => void removeTemplate(template)}>
-                        {t('common.delete')}
-                      </button>
                     </div>
-                  </div>
-                )}
+                  );
+                }}
               </For>
             </Show>
-            <div class="tpl-group-title">{t('template.projects')}</div>
-            <For each={filteredProjectTemplates()}>
-              {(projectTemplate) => {
-                const display = () => getBuiltinTemplateDisplay(projectTemplate, locale());
-                return (
-                  <div class="tpl-item">
-                    <div class="tpl-name">{display().name}</div>
-                    <div class="tpl-desc">{display().description}</div>
-                    <button class="btn" onClick={() => props.onSelect(projectTemplate)}>
-                      {t('common.apply')}
-                    </button>
-                  </div>
-                );
-              }}
-            </For>
+            <Show when={filteredBuiltinTemplates().length > 0}>
+              <button class="tpl-group-title tpl-collapse" type="button" onClick={() => toggleGroup('effects')} aria-expanded={!groupHidden('effects')}>
+                <span class="tpl-collapse-caret" aria-hidden="true" />
+                {t('template.effectsGroup')}
+              </button>
+              <Show when={!groupHidden('effects')}>
+                <For each={EFFECT_CATEGORIES}>
+                  {(category) => {
+                    const items = () => filteredBuiltinTemplates().filter((tpl) => tpl.category === category);
+                    const categoryKey = `effects:${category}`;
+                    return (
+                      <Show when={items().length > 0}>
+                        <button class="tpl-cat-title tpl-collapse" type="button" onClick={() => toggleGroup(categoryKey)} aria-expanded={!groupHidden(categoryKey)}>
+                          <span class="tpl-collapse-caret" aria-hidden="true" />
+                          {t(EFFECT_CATEGORY_KEYS[category])}
+                        </button>
+                        <Show when={!groupHidden(categoryKey)}>
+                          <For each={items()}>
+                            {(template) => (
+                              <div class="tpl-item builtin">
+                                <div class="tpl-name">{template.name}</div>
+                                <div class="tpl-desc">{template.description}</div>
+                                <div class="tpl-actions">
+                                  <button
+                                    class="btn mini"
+                                    disabled={!props.canApplyCode}
+                                    title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined}
+                                    onClick={() => void previewBuiltin(template)}
+                                  >
+                                    {t('common.preview')}
+                                  </button>
+                                  <button
+                                    class="btn mini"
+                                    disabled={!props.canApplyCode}
+                                    title={!props.canApplyCode ? props.codeApplyBlockedReason : undefined}
+                                    onClick={() => void Promise.resolve(props.onApplyBuiltin(template)).then((ok) => { if (ok) props.onClose(); })}
+                                  >
+                                    {t('common.apply')}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </For>
+                        </Show>
+                      </Show>
+                    );
+                  }}
+                </For>
+              </Show>
+            </Show>
           </div>
           <div class="modal-actions">
             <button class="btn" onClick={() => props.onClose()}>

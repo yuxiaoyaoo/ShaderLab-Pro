@@ -3,8 +3,8 @@ use crate::agent::pipeline::{self, ValidationView};
 use crate::agent::{Intent, Phase, SessionContext, ShaderAgent, ValidationStatus};
 use crate::config::{AgentConfig, AgentConfigView, PROVIDER_PRESETS};
 use crate::templates::{
-    delete_user_entry, list_user_entries, save_user_entry, TemplateEntry, TemplateRegistry,
-    UserTemplateError, UserTemplateRecord, USER_CATEGORY,
+    delete_user_entry, list_user_entries, save_user_entry, TemplateEntry, TemplateMeta,
+    TemplateRegistry, UserTemplateError, UserTemplateRecord, USER_CATEGORY,
 };
 use rig_core::message::Message;
 use serde::{Deserialize, Serialize};
@@ -662,6 +662,22 @@ pub async fn delete_user_template(slug: String, app: AppHandle) -> Result<(), Ip
     delete_user_entry(&dir, &slug).map_err(IpcError::from)?;
     let _ = app.emit("user-templates-changed", ());
     Ok(())
+}
+
+// ==================== 内置特效模板（30 个 .glsl，供模板库分组浏览）====================
+
+/// 列出全部内置特效模板的元数据（不含源码）
+#[tauri::command]
+pub async fn list_builtin_templates() -> Result<Vec<TemplateMeta>, IpcError> {
+    Ok(TemplateRegistry::global().list_meta())
+}
+
+/// 按 slug 取内置模板源码（访问失败返回 IpcError -> chat.template-not-found）
+#[tauri::command]
+pub async fn get_builtin_template_source(slug: String) -> Result<String, IpcError> {
+    TemplateRegistry::global()
+        .source_by_slug(&slug)
+        .ok_or_else(|| IpcError::new("chat.template-not-found"))
 }
 
 #[tauri::command]

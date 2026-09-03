@@ -248,3 +248,32 @@ export async function deleteUserTemplate(slug: string): Promise<void> {
     'chat.template-delete-failed',
   );
 }
+
+/** 内置特效模板元数据（对应后端 registry::TemplateMeta，不含源码） */
+export interface BuiltinTemplateMetaDto {
+  slug: string;
+  name: string;
+  category: string;
+  description: string;
+  tags: string[];
+  difficulty: string;
+  uniforms: string[];
+}
+
+/** 列出全部内置特效模板元数据（30 个 .glsl，供模板库分组浏览） */
+export async function listBuiltinTemplates(): Promise<BuiltinTemplateMetaDto[]> {
+  return invokeChatCommand<BuiltinTemplateMetaDto[]>(
+    'list_builtin_templates',
+    undefined,
+    'chat.template-fetch-failed',
+  );
+}
+
+/** 按 slug 获取内置模板源码 */
+export async function getBuiltinTemplateSource(slug: string): Promise<string> {
+  return invokeChatCommand<string>(
+    'get_builtin_template_source',
+    { slug },
+    'chat.template-fetch-failed',
+  );
+}

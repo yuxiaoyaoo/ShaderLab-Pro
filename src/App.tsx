@@ -98,7 +98,7 @@ import {
   writeSession,
   type OpenedProject,
 } from './project/projectIO';
-import { adoptTemplate, listUserTemplates, type UserTemplateViewDto } from './agent/agentClient';
+import { adoptTemplate, listUserTemplates, listBuiltinTemplates, getBuiltinTemplateSource, type BuiltinTemplateMetaDto, type UserTemplateViewDto } from './agent/agentClient';
 import { buildRuntimeSetup } from './shadertoy/setupBuilder';
 import { buildUniformContract, reconcileUniformValues } from './shadertoy/uniformContract';
 import { exportEligibility, validateExportTicket, type ExportEligibilityInput, type ExportRequirements, type ExportTicket } from './export/exportEligibility';
@@ -428,6 +428,8 @@ const App: Component = () => {
   const [speedOpen, setSpeedOpen] = createSignal(false);
   /** M6c：自定义模板池（后端 user_templates 目录镜像，user-templates-changed 事件驱动刷新） */
   const [userTemplates, setUserTemplates] = createSignal<UserTemplateViewDto[]>([]);
+  /** 内置特效模板（30 个 .glsl 元数据，启动时静默拉取；失败保持空 → 模板库隐藏该分组） */
+  const [builtinTemplates, setBuiltinTemplates] = createSignal<BuiltinTemplateMetaDto[]>([]);
   const [uniformValues, setUniformValues] = createSignal<Record<string, UniformValue>>({});
   const [exportOpen, setExportOpen] = createSignal(false);
   /** 非破坏性预览状态始终保留进入候选流程前的原始代码和脏状态。 */
@@ -1683,6 +1685,38 @@ const App: Component = () => {
     }
   };
 
+  /** 拉取内置特效模板元数据（启动时静默执行；浏览器/后端不可用时保持空数组） */
+  const refreshBuiltinTemplates = async () => {
+    try {
+      setBuiltinTemplates(await listBuiltinTemplates());
+    } catch {
+      /* 非桌面环境或后端未就绪时静默隐藏该分组 */
+    }
+  };
+
+  /** 应用内置特效模板：按 slug 取源码 → 推进 AI 阶段机 → 提交 Code authoring 边界。 */
+  const applyBuiltinTemplate = async (template: BuiltinTemplateMetaDto): Promise<boolean> => {
+    const boundary = codeApplyBoundary(imageAuthoring());
+    if (!boundary.allowed) {
+      notify(t('chat.graphBlocked'), 'error');
+      return false;
+    }
+    let code: string;
+    try {
+      code = await getBuiltinTemplateSource(template.slug);
+    } catch (error) {
+      notify(t('app.error.templateApplyFailed', { detail: formatProductMessage(error) }), 'error');
+      return false;
+    }
+    try {
+      const dto = await adoptTemplate(template.name);
+      if (dto.has_code && dto.code_fragment?.trim()) code = dto.code_fragment;
+    } catch {
+      /* 直落兜底 */
+    }
+    return applyAiCode(code);
+  };
+
   /** M6c：应用自定义模板——先执行 Code authoring 边界，再推进后端阶段机。 */
   const applyUserTemplateCode = async (template: UserTemplateViewDto): Promise<boolean> => {
     const boundary = codeApplyBoundary(imageAuthoring());
@@ -2742,6 +2776,7 @@ const App: Component = () => {
 
   onMount(() => {
     initAutoUpdater();
+    void refreshBuiltinTemplates();
     void refreshUserTemplates();
     void (async () => {
       if (!hasTauri()) return;
@@ -3882,6 +3917,9 @@ const App: Component = () => {
             editorCode={() => sources().image ?? ''}
             requestConfirm={requestConfirmation}
             notify={notify}
+            builtinTemplates={builtinTemplates()}
+            onApplyBuiltin={applyBuiltinTemplate}
+            onPreviewBuiltin={(name, code) => startPreview(name, code)}
           />
         </Suspense>
       </Show>

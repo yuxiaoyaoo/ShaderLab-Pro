@@ -69,6 +69,18 @@ pub struct TemplateMatch {
     pub relevance_score: f32,
 }
 
+/// 内置特效模板的元数据载荷（不含源码，源码按需通过 source_by_slug 获取）
+#[derive(Debug, Clone, Serialize)]
+pub struct TemplateMeta {
+    pub slug: String,
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub difficulty: String,
+    pub uniforms: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct TemplateEntry {
     pub slug: String,
@@ -420,6 +432,30 @@ impl TemplateRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.templates.is_empty()
+    }
+
+    /// 全部内置特效模板的元数据（按 manifest 顺序，供模板库分组浏览）
+    pub fn list_meta(&self) -> Vec<TemplateMeta> {
+        self.templates
+            .iter()
+            .map(|t| TemplateMeta {
+                slug: t.slug.clone(),
+                name: t.name.clone(),
+                category: t.category.clone(),
+                description: t.description.clone(),
+                tags: t.tags.clone(),
+                difficulty: t.difficulty.clone(),
+                uniforms: t.uniforms.clone(),
+            })
+            .collect()
+    }
+
+    /// 按 slug 取内置模板源码
+    pub fn source_by_slug(&self, slug: &str) -> Option<String> {
+        self.templates
+            .iter()
+            .find(|t| t.slug == slug)
+            .map(|t| t.code.clone())
     }
 
     /// 仅内置池按名解析（引用返回，零拷贝路径保留给旧调用方）

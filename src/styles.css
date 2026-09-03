@@ -1692,6 +1692,55 @@ kbd {
   color: var(--txt2);
 }
 
+.tpl-cat-title {
+  margin: 8px 0 1px;
+  padding: 0 2px;
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  color: var(--brand1-bright);
+}
+
+/* 分组头可折叠：标题行变为 button 时的统一样式 */
+.tpl-group-title.tpl-collapse,
+.tpl-cat-title.tpl-collapse {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0 2px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+.tpl-group-title.tpl-collapse {
+  margin: 10px 0 2px;
+}
+.tpl-group-title.tpl-collapse:hover {
+  color: var(--txt);
+}
+.tpl-cat-title.tpl-collapse:hover {
+  color: var(--brand1-bright);
+  opacity: 0.92;
+}
+.tpl-collapse-caret {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg); /* 展开：箭头朝下 */
+  opacity: 0.95;
+  transition: transform 0.16s ease;
+  margin-top: -2px;
+}
+/* 折叠：箭头朝右（基于 aria-expanded 派生，无需 JS 状态类） */
+.tpl-collapse[aria-expanded='false'] .tpl-collapse-caret {
+  transform: rotate(-45deg);
+}
+
 .tpl-toolbar {
   display: flex;
   align-items: center;
@@ -2301,6 +2350,15 @@ kbd {
   gap: 7px;
   font-size: 13px;
   font-weight: 600;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+/* 图标与标题恒为一行：英文等长文案在窄面板下标题省略，而不是把图标/文字挤成两行 */
+.chat-title-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chat-title-icon {
@@ -2308,6 +2366,13 @@ kbd {
   height: 19px;
   border-radius: 6px;
   box-shadow: 0 1px 5px rgba(105, 110, 255, 0.4);
+  flex-shrink: 0;
+}
+
+.chat-head .chat-phase-badge,
+.chat-head .btn.mini {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .chat-phase-badge {

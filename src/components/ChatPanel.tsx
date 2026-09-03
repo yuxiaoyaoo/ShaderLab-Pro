@@ -448,7 +448,7 @@ const ChatPanel: Component<Props> = (props) => {
             <path d="M12 5.5l1.6 4.4 4.4 1.6-4.4 1.6L12 17.5l-1.6-4.4L6 11.5l4.4-1.6L12 5.5z" fill="#fff" />
             <path d="M17.6 14.9l0.8 2 2 0.8-2 0.8-0.8 2-0.8-2-2-0.8 2-0.8 0.8-2z" fill="#fff" opacity="0.85" />
           </svg>
-          {t('chat.title')}
+          <span class="chat-title-text">{t('chat.title')}</span>
         </span>
         <span class={`chat-phase-badge phase-${phaseId()}`}>{PHASE_NAME_KEYS[phaseId()] ? t(PHASE_NAME_KEYS[phaseId()]) : phaseName()}</span>
         <span class="spacer" />

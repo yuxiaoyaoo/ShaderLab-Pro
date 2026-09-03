@@ -823,6 +823,8 @@ pub fn run() {
             ipc::chat::list_user_templates,
             ipc::chat::save_user_template,
             ipc::chat::delete_user_template,
+            ipc::chat::list_builtin_templates,
+            ipc::chat::get_builtin_template_source,
             ipc::chat::get_phase,
             ipc::chat::reset_session,
             ipc::chat::get_agent_config,

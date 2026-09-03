@@ -1336,6 +1336,14 @@ const additionalMessages = {
   'app.toast.projectDeleted': { 'zh-CN': '已删除项目：{name}', en: 'Project deleted: {name}' },
   'app.error.projectDeleteFailed': { 'zh-CN': '删除项目失败：{detail}', en: 'Failed to delete the project: {detail}' },
   'app.error.revealFailed': { 'zh-CN': '无法在文件管理器中定位：{detail}', en: 'Could not reveal in the file manager: {detail}' },
+  'chat.template-fetch-failed': { 'zh-CN': '读取内置模板失败：{detail}', en: 'Failed to load built-in templates: {detail}' },
+  'app.error.templateApplyFailed': { 'zh-CN': '应用内置模板失败：{detail}', en: 'Failed to apply built-in template: {detail}' },
+  'template.effectsGroup': { 'zh-CN': '✨ 内置特效模板', en: '✨ Built-in Effects' },
+  'template.category.particles': { 'zh-CN': '粒子', en: 'Particles' },
+  'template.category.geometry': { 'zh-CN': '几何', en: 'Shapes' },
+  'template.category.materials': { 'zh-CN': '材质', en: 'Materials' },
+  'template.category.postprocess': { 'zh-CN': '后处理', en: 'Post-processing' },
+  'template.category.scenes': { 'zh-CN': '场景', en: 'Scenes' },
 } as const satisfies Record<string, Record<Locale, string>>;
 
 type AdditionalTranslationKey = keyof typeof additionalMessages;
